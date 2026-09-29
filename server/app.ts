@@ -77,11 +77,9 @@ export function createApp(
       !loopback.has(requestUrl.hostname) &&
       host.toLowerCase() !== publicHost?.toLowerCase()
     ) {
-      return res
-        .status(403)
-        .json({
-          error: "Configura APPBUILDER_PUBLIC_ORIGIN para este dominio.",
-        });
+      return res.status(403).json({
+        error: "Configura APPBUILDER_PUBLIC_ORIGIN para este dominio.",
+      });
     }
     const origin = req.headers.origin;
     const sameOrigin =

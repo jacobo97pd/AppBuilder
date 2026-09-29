@@ -94,9 +94,7 @@ function parseStatus(output: string): Change[] {
   return result;
 }
 
-export async function getGitStatus(
-  projectId: string,
-): Promise<{
+export async function getGitStatus(projectId: string): Promise<{
   branch: string;
   changes: Change[];
   log: { hash: string; message: string; date: string }[];

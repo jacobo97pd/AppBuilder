@@ -737,17 +737,15 @@ export function createIntegrationsRouter(): Router {
         JSON.stringify(associations),
       );
     }
-    response
-      .status(201)
-      .json(
-        normalizeBuild({
-          buildId: result.buildId,
-          appId,
-          workflowId,
-          branch,
-          status: "queued",
-        }),
-      );
+    response.status(201).json(
+      normalizeBuild({
+        buildId: result.buildId,
+        appId,
+        workflowId,
+        branch,
+        status: "queued",
+      }),
+    );
   });
   router.post("/builds/:id/cancel", async (request, response) => {
     await providerRequest(
