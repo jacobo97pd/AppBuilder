@@ -1,0 +1,118 @@
+# These workflows produce web assets and TEST native apps, not store releases.
+# server_url is public configuration. Never put API tokens in this input.
+workflows:
+  web-check:
+    name: AppBuilder · Web checks
+    instance_type: linux_x2
+    max_build_duration: 20
+    environment:
+      node: 22.12.0
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+      - name: Check types
+        script: npm run check
+      - name: Run tests
+        script: npm test
+      - name: Build web client
+        script: npm run build
+    artifacts:
+      - dist/**
+
+  android-debug:
+    name: AppBuilder · Android debug
+    instance_type: linux_x2
+    max_build_duration: 45
+    inputs:
+      server_url:
+        description: HTTPS AppBuilder server URL; leave blank for connection setup screen
+        default: ""
+    environment:
+      node: 22.12.0
+      java: 21
+      vars:
+        APPBUILDER_SERVER_URL: ${{ inputs.server_url }}
+        VITE_APPBUILDER_SERVER_URL: ${{ inputs.server_url }}
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+      - name: Check and test
+        script: |
+          set -e
+          node scripts/check-env.mjs
+          npm run check
+          npm test
+      - name: Build and sync Android shell
+        script: |
+          set -e
+          npm run build
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+      - name: Build debug APK
+        script: |
+          set -e
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+    artifacts:
+      - android/app/build/outputs/apk/debug/*.apk
+      - android/app/build/reports/**
+
+  ios-simulator:
+    name: AppBuilder · iOS simulator (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    inputs:
+      server_url:
+        description: HTTPS AppBuilder server URL; leave blank for connection setup screen
+        default: ""
+    environment:
+      node: 22.12.0
+      xcode: latest
+      cocoapods: default
+      vars:
+        APPBUILDER_SERVER_URL: ${{ inputs.server_url }}
+        VITE_APPBUILDER_SERVER_URL: ${{ inputs.server_url }}
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+      - name: Check and test
+        script: |
+          set -e
+          node scripts/check-env.mjs
+          npm run check
+          npm test
+      - name: Build and sync iOS shell
+        script: |
+          set -e
+          npm run build
+          if [ ! -d ios ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+      - name: Build unsigned simulator app
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          mkdir -p build
+          if [ -d ios/App/App.xcworkspace ]; then
+            project_args=(-workspace ios/App/App.xcworkspace)
+          else
+            project_args=(-project ios/App/App.xcodeproj)
+          fi
+          xcodebuild "${project_args[@]}" \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build/ios-build.log
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios/Build/Products/Debug-iphonesimulator/App.app \
+            build/AppBuilder-simulator.zip
+    artifacts:
+      - build/AppBuilder-simulator.zip
+      - build/ios-build.log

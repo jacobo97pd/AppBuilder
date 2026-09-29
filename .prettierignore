@@ -1,0 +1,10 @@
+node_modules
+dist
+.appbuilder
+.cache
+android
+ios
+artifacts
+playwright-report
+test-results
+package-lock.json
