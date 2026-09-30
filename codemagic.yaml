@@ -123,7 +123,7 @@ workflows:
     max_build_duration: 60
 
     integrations:
-      app_store_connect: AppBuilder Apple
+      app_store_connect: Codemagic AppBuilder
 
     environment:
       node: 22.12.0
