@@ -44,6 +44,8 @@ Para usar Codex con tu plan ChatGPT, inicia sesión en **el ordenador que ejecut
 
 Claude se conecta actualmente mediante una API key de Anthropic con su facturación correspondiente. Anthropic no permite ofrecer inicio de sesión de claude.ai en productos de terceros sin aprobación previa; por eso la suscripción Claude no se puede conectar aquí como alternativa sin coste API.
 
+Si usas Claude Code con tu suscripción en este ordenador, la terminal de AppBuilder puede ejecutar comandos no interactivos del CLI oficial, por ejemplo `claude -p "Revisa este proyecto"`. Para trabajar desde el iPhone sobre los proyectos locales con la app oficial de Claude, ejecuta `powershell -ExecutionPolicy RemoteSigned -File scripts/start-claude-remote.ps1` en este ordenador. El script inicia Remote Control en `.appbuilder/projects` y elimina de ese proceso las variables que harían prevalecer la facturación API. La primera vez, Claude puede pedir que inicies sesión y confirmes que confías en esa carpeta. Esto no cambia el conector visual de Claude de AppBuilder, que sigue usando API key.
+
 Configura las demás claves en la interfaz o copia `.env.example` a `.env`. Las credenciales introducidas en la interfaz se cifran con AES-256-GCM. Por defecto, la clave maestra está en el mismo servidor: el cifrado no protege frente a alguien con acceso completo a ese equipo. Para separar la clave, configura `APPBUILDER_VAULT_KEY` con 32 bytes aleatorios en base64.
 
 El servidor escucha solamente en `127.0.0.1`. El acceso remoto exige un token de al menos 32 caracteres, `APPBUILDER_PUBLIC_ORIGIN` HTTPS y un proxy TLS. La app nativa pide URL HTTPS y token; guarda la URL y conserva el token solo durante la sesión. Consulta [despliegue y móvil](docs/DEPLOYMENT.md).
@@ -83,6 +85,7 @@ codemagic.yaml      Checks web, APK debug e iOS simulador sin firma
 
 - [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk), [autenticación](https://learn.chatgpt.com/docs/auth) y [App Server](https://learn.chatgpt.com/docs/app-server).
 - [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/quickstart).
+- [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control).
 - [Codemagic Builds API](https://docs.codemagic.io/rest-api/builds/).
 - [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi/).
 - [Google Play Developer API](https://developers.google.com/android-publisher/api-ref/rest).
