@@ -18,9 +18,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
+import { promisify } from "node:util";
 import {
   createJob,
   appendJob,
@@ -40,6 +41,7 @@ type AgentDependencies = {
   discoverModels: (provider: Provider) => Promise<ModelDiscovery>;
   redactSecrets: (text: string) => string;
   integrationDirectory: () => string;
+  codexAuthMode: () => "api" | "chatgpt" | "disabled";
 };
 type AgentInput = {
   provider: Provider;
@@ -50,6 +52,35 @@ type AgentInput = {
   newSession?: boolean;
 };
 const activeProjects = new Set<string>();
+const execFileAsync = promisify(execFile);
+
+function codexExecutable(): string {
+  const require = createRequire(import.meta.url);
+  return path.join(
+    path.dirname(require.resolve("@openai/codex/package.json")),
+    "bin",
+    "codex.js",
+  );
+}
+
+/** Check the local Codex login without reading or returning its credentials. */
+export async function codexAccountStatus(): Promise<boolean> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      [codexExecutable(), "login", "status"],
+      {
+        env: agentEnvironment(),
+        windowsHide: true,
+        timeout: 15_000,
+        maxBuffer: 5_000,
+      },
+    );
+    return /Logged in using ChatGPT/i.test(`${stdout}\n${stderr}`);
+  } catch {
+    return false;
+  }
+}
 
 function invalid(message: string, status = 400): Error & { status: number } {
   return Object.assign(new Error(message), { status });
@@ -83,25 +114,30 @@ export function agentEnvironment(): Record<string, string> {
   ) as Record<string, string>;
 }
 
-/** Read runtime capability metadata without starting a turn or reading a user's login. */
+/** Read runtime capability metadata without starting an agent turn. */
 export async function codexModelMetadata(
   directory: string,
+  account = false,
 ): Promise<Map<string, { name: string; efforts: string[] }>> {
-  const require = createRequire(import.meta.url);
-  const executable = path.join(
-    path.dirname(require.resolve("@openai/codex/package.json")),
-    "bin",
-    "codex.js",
-  );
   const runtimeHome = path.resolve(directory, "runtime", "catalog");
   mkdirSync(runtimeHome, { recursive: true, mode: 0o700 });
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [executable, "app-server"], {
-      cwd: runtimeHome,
-      env: { ...agentEnvironment(), CODEX_HOME: runtimeHome },
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "ignore"],
-    });
+    const child = spawn(
+      process.execPath,
+      [
+        codexExecutable(),
+        "app-server",
+        ...(account ? ["-c", 'forced_login_method="chatgpt"'] : []),
+      ],
+      {
+        cwd: runtimeHome,
+        env: account
+          ? agentEnvironment()
+          : { ...agentEnvironment(), CODEX_HOME: runtimeHome },
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "ignore"],
+      },
+    );
     const lines = createInterface({ input: child.stdout });
     const result = new Map<string, { name: string; efforts: string[] }>();
     let done = false;
@@ -249,10 +285,14 @@ function sessionFile(
   dependencies: AgentDependencies,
   projectId: string,
   provider: Provider,
+  account = false,
 ) {
   const folder = path.join(dependencies.integrationDirectory(), "sessions");
   mkdirSync(folder, { recursive: true, mode: 0o700 });
-  return path.join(folder, `${projectId}-${provider}.json`);
+  return path.join(
+    folder,
+    `${projectId}-${provider}${account ? "-chatgpt" : ""}.json`,
+  );
 }
 
 function readSession(filename: string): string | undefined {
@@ -287,6 +327,7 @@ async function runCodex(
   input: AgentInput,
   root: string,
   apiKey: string,
+  account: boolean,
   session: string | undefined,
   saveSession: (id: string) => void,
   signal: AbortSignal,
@@ -294,13 +335,15 @@ async function runCodex(
   dependencies: AgentDependencies,
 ) {
   const codex = new Codex({
-    apiKey,
-    env: {
-      ...agentEnvironment(),
-      CODEX_HOME: runtimeDirectory(dependencies, "codex"),
-    },
+    ...(account ? {} : { apiKey }),
+    env: account
+      ? agentEnvironment()
+      : {
+          ...agentEnvironment(),
+          CODEX_HOME: runtimeDirectory(dependencies, "codex"),
+        },
     config: {
-      forced_login_method: "api",
+      forced_login_method: account ? "chatgpt" : "api",
       shell_environment_policy: { inherit: "core" },
     },
   });
@@ -522,7 +565,14 @@ export function mountAgentRoutes(
         "Esta integración admite velocidad estándar. No se puede prometer una velocidad que el SDK no expone.",
       );
     const provider: Provider = body.provider;
+    const account =
+      provider === "codex" && dependencies.codexAuthMode() === "chatgpt";
     const credentials = dependencies.readCredentials(provider);
+    if (account && !(await codexAccountStatus()))
+      throw invalid(
+        "Inicia sesión con ChatGPT mediante Codex en el ordenador que ejecuta AppBuilder.",
+        409,
+      );
     if (effort) {
       const catalog = await dependencies.discoverModels(provider);
       const model = catalog.models.find(
@@ -563,7 +613,7 @@ export function mountAgentRoutes(
       throw error;
     }
     const root = projectDir(projectId);
-    const filename = sessionFile(dependencies, projectId, provider);
+    const filename = sessionFile(dependencies, projectId, provider, account);
     const session = input.newSession ? undefined : readSession(filename);
     const controller = new AbortController();
     let resolveCompletion!: () => void;
@@ -596,6 +646,7 @@ export function mountAgentRoutes(
             input,
             root,
             credentials.apiKey,
+            account,
             session,
             saveSession,
             controller.signal,

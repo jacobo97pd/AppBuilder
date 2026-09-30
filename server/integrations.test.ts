@@ -416,11 +416,18 @@ test("Google track inspection signs OAuth, never commits an edit and always clea
   );
 });
 
-test("disconnect removes saved secrets and reports remaining environment credentials", async () => {
+test("disconnect blocks Codex access even with an API key in the environment", async () => {
   process.env.OPENAI_API_KEY = "sk-environment-key-123456";
   const result = await api("/connections/codex", "DELETE");
   assert.equal(result.body.ok, true);
-  assert.match(result.body.message, /variables de entorno/);
+  assert.match(result.body.message, /desconectado/);
+  const { readCredentials } = await import("./integrations.js");
+  assert.throws(() => readCredentials("codex"), /Conecta OpenAI Codex/);
+  const withKey = await api("/connections");
+  assert.equal(
+    withKey.body.find((connection: any) => connection.id === "codex").status,
+    "missing",
+  );
   delete process.env.OPENAI_API_KEY;
   const connections = await api("/connections");
   assert.equal(

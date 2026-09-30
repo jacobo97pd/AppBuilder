@@ -23,12 +23,12 @@ Abre **http://127.0.0.1:4310**. Se crea automáticamente un proyecto editable, *
 - Terminal por comandos con stdout/stderr real, historial persistente, cancelación de procesos secundarios, cuatro tareas simultáneas y límite de duración. **No es un PTY interactivo**: usa comandos no interactivos o encadena operaciones en un mismo comando; `cd` no persiste entre trabajos.
 - Vista previa del HTML o React guardado, recompilación y consola. El iframe tiene origen aislado y no comparte credenciales ni almacenamiento con el editor. Las plantillas usan memoria cuando el navegador restringe localStorage; el estado de la app de ejemplo puede reiniciarse al actualizar la preview.
 - Git: estado, diferencias por archivo, commits, restauración de archivos y checkpoint automático antes de tareas de IA.
-- Integraciones reales mediante las claves que añadas en **Conexiones**. Nunca se simulan respuestas de proveedores.
+- Integraciones reales mediante la cuenta ChatGPT iniciada en Codex o las claves que añadas en **Conexiones**. Nunca se simulan respuestas de proveedores.
 - PWA instalable y proyectos Capacitor para Android/iOS con interfaz empaquetada y configuración de servidor HTTPS.
 
 | Conector          | Implementado                                                                          | Necesita configuración externa                                                               |
 | ----------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Codex             | SDK oficial, tareas, sesiones, archivos, comandos, cancelación y uso de tokens        | API key de OpenAI y acceso al modelo elegido                                                 |
+| Codex             | SDK oficial, tareas, sesiones, archivos, comandos, cancelación y uso de tokens        | Sesión ChatGPT de Codex en el servidor o API key de OpenAI; acceso al modelo elegido         |
 | Claude            | Agent SDK oficial, tareas, sesiones y herramientas de archivos                        | API key de Anthropic; Bash requiere sandbox de Linux/macOS, no se habilita en Windows        |
 | Modelos           | Catálogo de la cuenta; esfuerzo únicamente cuando hay metadatos del proveedor/runtime | La velocidad disponible en estos adaptadores es estándar; no hay un selector rápido ficticio |
 | Codemagic         | Iniciar/cancelar builds, consultar estados y enlaces a artefactos y registros         | Token, repositorio registrado, App ID, workflow y rama remota                                |
@@ -40,7 +40,11 @@ La publicación final en tiendas, gestión completa de certificados, firma y sub
 
 ## Conexiones y almacenamiento
 
-Configura las claves en la interfaz o copia `.env.example` a `.env`. Las credenciales introducidas en la interfaz se cifran con AES-256-GCM. Por defecto, la clave maestra está en el mismo servidor: el cifrado no protege frente a alguien con acceso completo a ese equipo. Para separar la clave, configura `APPBUILDER_VAULT_KEY` con 32 bytes aleatorios en base64.
+Para usar Codex con tu plan ChatGPT, inicia sesión en **el ordenador que ejecuta el servidor** mediante `codex login` y pulsa **Usar cuenta ChatGPT** en Conexiones. AppBuilder fuerza ese modo de autenticación y no entrega una API key al SDK. La modalidad de API key es opcional y tiene facturación aparte. La sesión ChatGPT debe mantenerse activa en ese ordenador.
+
+Claude se conecta actualmente mediante una API key de Anthropic con su facturación correspondiente. Anthropic no permite ofrecer inicio de sesión de claude.ai en productos de terceros sin aprobación previa; por eso la suscripción Claude no se puede conectar aquí como alternativa sin coste API.
+
+Configura las demás claves en la interfaz o copia `.env.example` a `.env`. Las credenciales introducidas en la interfaz se cifran con AES-256-GCM. Por defecto, la clave maestra está en el mismo servidor: el cifrado no protege frente a alguien con acceso completo a ese equipo. Para separar la clave, configura `APPBUILDER_VAULT_KEY` con 32 bytes aleatorios en base64.
 
 El servidor escucha solamente en `127.0.0.1`. El acceso remoto exige un token de al menos 32 caracteres, `APPBUILDER_PUBLIC_ORIGIN` HTTPS y un proxy TLS. La app nativa pide URL HTTPS y token; guarda la URL y conserva el token solo durante la sesión. Consulta [despliegue y móvil](docs/DEPLOYMENT.md).
 
@@ -77,8 +81,8 @@ codemagic.yaml      Checks web, APK debug e iOS simulador sin firma
 
 ## Referencias de integración
 
-- [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk) y [App Server](https://learn.chatgpt.com/docs/app-server).
-- [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview).
+- [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk), [autenticación](https://learn.chatgpt.com/docs/auth) y [App Server](https://learn.chatgpt.com/docs/app-server).
+- [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/quickstart).
 - [Codemagic Builds API](https://docs.codemagic.io/rest-api/builds/).
 - [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi/).
 - [Google Play Developer API](https://developers.google.com/android-publisher/api-ref/rest).

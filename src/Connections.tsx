@@ -47,7 +47,7 @@ const metadata: Record<
     description:
       "Planifica, escribe código y resuelve problemas con un agente que conoce tu proyecto.",
     label: "OpenAI",
-    docs: "https://platform.openai.com/api-keys",
+    docs: "https://learn.chatgpt.com/docs/auth",
     color: "mint",
     icon: Braces,
   },
@@ -108,6 +108,7 @@ export function Connections({
 }) {
   const [editing, setEditing] = useState<Connection | null>(null);
   const [testing, setTesting] = useState("");
+  const [connectingAccount, setConnectingAccount] = useState(false);
   const [exploring, setExploring] = useState<Connection | null>(null);
   const [filter, setFilter] = useState("all");
   async function test(connection: Connection) {
@@ -132,6 +133,18 @@ export function Connections({
       notify("Credenciales guardadas eliminadas.");
     } catch (e) {
       notify(errorMessage(e), "error");
+    }
+  }
+  async function connectChatgpt() {
+    setConnectingAccount(true);
+    try {
+      await post("/connections/codex/account");
+      await refresh();
+      notify("Cuenta ChatGPT conectada para Codex en este ordenador.");
+    } catch (error) {
+      notify(errorMessage(error), "error");
+    } finally {
+      setConnectingAccount(false);
     }
   }
   return (
@@ -206,6 +219,16 @@ export function Connections({
                 <p>{meta.description}</p>
                 <div className="connection-detail">{c.detail}</div>
                 <div className="connection-actions">
+                  {c.id === "codex" && c.authMode !== "chatgpt" && (
+                    <button
+                      className="button small dark"
+                      onClick={() => void connectChatgpt()}
+                      disabled={connectingAccount}
+                    >
+                      {connectingAccount ? <Spinner /> : <Plug size={14} />}
+                      Usar cuenta ChatGPT
+                    </button>
+                  )}
                   {c.status !== "missing" ? (
                     <>
                       <button
@@ -229,14 +252,16 @@ export function Connections({
                           <ArrowRight size={13} />
                         </button>
                       )}
-                      <button
-                        className="icon-button"
-                        title="Editar credenciales"
-                        aria-label={`Editar ${c.name}`}
-                        onClick={() => setEditing(c)}
-                      >
-                        <KeyRound size={16} />
-                      </button>
+                      {c.authMode !== "chatgpt" && (
+                        <button
+                          className="icon-button"
+                          title="Editar credenciales"
+                          aria-label={`Editar ${c.name}`}
+                          onClick={() => setEditing(c)}
+                        >
+                          <KeyRound size={16} />
+                        </button>
+                      )}
                       <button
                         className="icon-button"
                         title="Eliminar credenciales guardadas"
@@ -248,11 +273,11 @@ export function Connections({
                     </>
                   ) : (
                     <button
-                      className="button small dark"
+                      className="button small light"
                       onClick={() => setEditing(c)}
                     >
                       <Plug size={14} />
-                      Conectar
+                      {c.id === "codex" ? "Usar API key" : "Conectar"}
                     </button>
                   )}
                   <a
@@ -377,8 +402,9 @@ function ConnectionModal({
           <div className="notice">
             <KeyRound size={17} />
             <p>
-              Esta conexión utiliza una clave API y su facturación asociada. No
-              inicia sesión con una suscripción personal de ChatGPT o Claude.
+              {connection.id === "codex"
+                ? "Esta opción usa una API key con facturación independiente. Para usar tu suscripción, pulsa «Usar cuenta ChatGPT» en la tarjeta de Codex."
+                : "Esta conexión usa una API key con facturación independiente. Anthropic no permite ofrecer inicio de sesión de Claude en esta app sin aprobación previa."}
             </p>
           </div>
         )}

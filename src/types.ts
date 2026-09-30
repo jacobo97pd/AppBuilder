@@ -28,6 +28,7 @@ export type Connection = {
   name: string;
   status: "connected" | "missing" | "error";
   detail: string;
+  authMode?: "api" | "chatgpt" | "disabled";
   fields: {
     key: string;
     label: string;

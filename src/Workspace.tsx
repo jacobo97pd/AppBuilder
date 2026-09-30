@@ -931,7 +931,9 @@ function AgentPanel({
               <p>
                 {connection?.status === "error"
                   ? connection.detail
-                  : "Añade tu clave API para trabajar con el agente."}
+                  : provider === "codex"
+                    ? "Conecta tu cuenta ChatGPT o añade una API key."
+                    : "Añade tu clave API para trabajar con el agente."}
               </p>
             </div>
             <button aria-label="Configurar agente" onClick={onConnections}>

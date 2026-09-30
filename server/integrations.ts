@@ -9,10 +9,15 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { importPKCS8, SignJWT } from "jose";
-import { codexModelMetadata, mountAgentRoutes } from "./agents.js";
+import {
+  codexAccountStatus,
+  codexModelMetadata,
+  mountAgentRoutes,
+} from "./agents.js";
 import { getProject } from "./workspace.js";
 
 export type Provider = "codex" | "claude";
+export type CodexAuthMode = "api" | "chatgpt" | "disabled";
 export type ConnectionId =
   Provider | "codemagic" | "apple" | "google" | "github";
 type Credentials = Record<string, string>;
@@ -224,17 +229,38 @@ export function readCredentials(
   for (const [key, envName] of Object.entries(definitions[id].env)) {
     if (process.env[envName]) values[key] = process.env[envName]!;
   }
-  Object.assign(values, loadVault()[id] || {});
-  if (
-    required &&
-    definitions[id].fields.some((field) => !values[field.key]?.trim())
-  ) {
+  const saved = loadVault()[id] || {};
+  for (const field of definitions[id].fields)
+    if (saved[field.key]) values[field.key] = saved[field.key];
+  const mode = id === "codex" ? codexAuthMode() : undefined;
+  const missingKey = definitions[id].fields.some(
+    (field) => !values[field.key]?.trim(),
+  );
+  if (required && (mode === "disabled" || (mode !== "chatgpt" && missingKey))) {
     throw new IntegrationError(
       `Conecta ${definitions[id].name} en Conexiones para continuar.`,
       409,
     );
   }
   return values;
+}
+
+export function codexAuthMode(): CodexAuthMode {
+  const mode = loadVault().codex?.authMode;
+  return mode === "chatgpt" || mode === "disabled" ? mode : "api";
+}
+
+export async function connectCodexAccount(): Promise<void> {
+  if (!(await codexAccountStatus()))
+    throw new IntegrationError(
+      "Inicia sesión en este ordenador con `codex login` usando tu cuenta ChatGPT y vuelve a intentarlo.",
+      409,
+    );
+  const vault = loadVault();
+  vault.codex = { ...(vault.codex || {}), authMode: "chatgpt" };
+  saveVault(vault);
+  connectionTests.delete("codex");
+  modelCache.delete("codex");
 }
 
 const connectionTests = new Map<
@@ -250,13 +276,16 @@ export function listConnections() {
   return Object.entries(definitions).map(([key, definition]) => {
     const id = key as ConnectionId;
     const values = readCredentials(id, false);
-    const configured = definition.fields.every((field) =>
-      Boolean(values[field.key]?.trim()),
-    );
+    const authMode = id === "codex" ? codexAuthMode() : undefined;
+    const configured =
+      authMode === "chatgpt" ||
+      (authMode !== "disabled" &&
+        definition.fields.every((field) => Boolean(values[field.key]?.trim())));
     const test = connectionTests.get(id);
     return {
       id,
       name: definition.name,
+      ...(authMode ? { authMode } : {}),
       status: configured
         ? test?.ok === false
           ? "error"
@@ -264,7 +293,9 @@ export function listConnections() {
         : "missing",
       detail: configured
         ? test?.message ||
-          "Credenciales guardadas. Pulsa «Probar» para verificar el acceso."
+          (authMode === "chatgpt"
+            ? "Usando la cuenta ChatGPT iniciada en Codex en este ordenador. No se utiliza la API key."
+            : "Credenciales guardadas. Pulsa «Probar» para verificar el acceso.")
         : definition.description,
       fields: definition.fields,
     };
@@ -291,6 +322,7 @@ export function saveCredentials(id: ConnectionId, input: unknown) {
     throw new IntegrationError(
       "La clave de Apple debe estar en formato PEM (.p8).",
     );
+  if (id === "codex") values.authMode = "api";
   vault[id] = values;
   saveVault(vault);
   connectionTests.delete(id);
@@ -369,6 +401,34 @@ function supportedEfforts(value: any, allowed: string[]): string[] {
 export async function discoverModels(
   provider: Provider,
 ): Promise<ModelDiscovery> {
+  if (provider === "codex" && codexAuthMode() === "chatgpt") {
+    if (!(await codexAccountStatus()))
+      throw new IntegrationError(
+        "La sesión ChatGPT de Codex no está activa en este ordenador.",
+        409,
+      );
+    const cached = modelCache.get(provider);
+    if (cached?.key === "chatgpt" && cached.expires > Date.now())
+      return cached.data;
+    const metadata = await codexModelMetadata(integrationDirectory(), true);
+    const data: ModelDiscovery = {
+      models: Array.from(metadata, ([id, item]) => ({
+        id,
+        name: item.name,
+        efforts: item.efforts,
+        speeds: ["standard"],
+      })),
+      source: "Codex CLI · cuenta ChatGPT",
+      message:
+        "Usando tu cuenta ChatGPT, sin API key. El catálogo no garantiza acceso a cada modelo; se comprueba al ejecutar.",
+    };
+    modelCache.set(provider, {
+      key: "chatgpt",
+      expires: Date.now() + 300_000,
+      data,
+    });
+    return data;
+  }
   const { apiKey } = readCredentials(provider);
   const cached = modelCache.get(provider);
   if (cached?.key === apiKey && cached.expires > Date.now()) return cached.data;
@@ -580,6 +640,10 @@ function codemagicHeaders() {
 
 export function createIntegrationsRouter(): Router {
   const router = Router();
+  router.post("/connections/codex/account", async (_request, response) => {
+    await connectCodexAccount();
+    response.json(listConnections().find((item) => item.id === "codex"));
+  });
   router.get("/connections", (_request, response) =>
     response.json(listConnections()),
   );
@@ -591,15 +655,19 @@ export function createIntegrationsRouter(): Router {
   router.delete("/connections/:id", (request, response) => {
     const id = connectionId(String(request.params.id));
     const vault = loadVault();
-    delete vault[id];
+    if (id === "codex") vault.codex = { authMode: "disabled" };
+    else delete vault[id];
     saveVault(vault);
     connectionTests.delete(id);
     if (id === "codex" || id === "claude") modelCache.delete(id);
     response.json({
       ok: true,
-      message: Object.keys(readCredentials(id, false)).length
-        ? "Credenciales locales eliminadas. El servidor sigue configurado mediante variables de entorno."
-        : "Conector desconectado.",
+      message:
+        id === "codex"
+          ? "Codex desconectado de AppBuilder. La sesión ChatGPT del ordenador sigue abierta."
+          : Object.keys(readCredentials(id, false)).length
+            ? "Credenciales locales eliminadas. El servidor sigue configurado mediante variables de entorno."
+            : "Conector desconectado.",
     });
   });
   router.post("/connections/:id/test", async (request, response) => {
@@ -610,7 +678,10 @@ export function createIntegrationsRouter(): Router {
       if (id === "codex" || id === "claude") {
         modelCache.delete(id);
         const data = await discoverModels(id);
-        message = `Acceso verificado. ${data.models.length} modelos visibles.`;
+        message =
+          id === "codex" && codexAuthMode() === "chatgpt"
+            ? `Cuenta ChatGPT detectada. ${data.models.length} modelos en el catálogo de Codex; el acceso se comprueba al ejecutar.`
+            : `Acceso verificado. ${data.models.length} modelos visibles.`;
       } else if (id === "codemagic") {
         await providerRequest("https://api.codemagic.io/apps", {
           headers: codemagicHeaders(),
@@ -674,6 +745,7 @@ export function createIntegrationsRouter(): Router {
     discoverModels,
     redactSecrets,
     integrationDirectory,
+    codexAuthMode,
   });
 
   router.get("/builds", async (request, response) => {
