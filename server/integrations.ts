@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { importPKCS8, SignJWT } from "jose";
 import {
+  claudeCodeAccountStatus,
   codexAccountStatus,
   codexModelMetadata,
   mountAgentRoutes,
@@ -18,6 +19,7 @@ import { getProject } from "./workspace.js";
 
 export type Provider = "codex" | "claude";
 export type CodexAuthMode = "api" | "chatgpt" | "disabled";
+export type ClaudeAuthMode = "api" | "claude_code" | "disabled";
 export type ConnectionId =
   Provider | "codemagic" | "apple" | "google" | "github";
 type Credentials = Record<string, string>;
@@ -232,11 +234,20 @@ export function readCredentials(
   const saved = loadVault()[id] || {};
   for (const field of definitions[id].fields)
     if (saved[field.key]) values[field.key] = saved[field.key];
-  const mode = id === "codex" ? codexAuthMode() : undefined;
+  const mode =
+    id === "codex"
+      ? codexAuthMode()
+      : id === "claude"
+        ? claudeAuthMode()
+        : undefined;
   const missingKey = definitions[id].fields.some(
     (field) => !values[field.key]?.trim(),
   );
-  if (required && (mode === "disabled" || (mode !== "chatgpt" && missingKey))) {
+  if (
+    required &&
+    (mode === "disabled" ||
+      (mode !== "chatgpt" && mode !== "claude_code" && missingKey))
+  ) {
     throw new IntegrationError(
       `Conecta ${definitions[id].name} en Conexiones para continuar.`,
       409,
@@ -263,6 +274,26 @@ export async function connectCodexAccount(): Promise<void> {
   modelCache.delete("codex");
 }
 
+export function claudeAuthMode(): ClaudeAuthMode {
+  const mode = loadVault().claude?.authMode;
+  return mode === "claude_code" || mode === "disabled" ? mode : "api";
+}
+
+export async function connectClaudeCode(
+  checkAccount = claudeCodeAccountStatus,
+): Promise<void> {
+  if (!(await checkAccount()))
+    throw new IntegrationError(
+      "Instala Claude Code e inicia sesión con tu suscripción en el ordenador que ejecuta AppBuilder.",
+      409,
+    );
+  const vault = loadVault();
+  vault.claude = { authMode: "claude_code" };
+  saveVault(vault);
+  connectionTests.delete("claude");
+  modelCache.delete("claude");
+}
+
 const connectionTests = new Map<
   ConnectionId,
   { ok: boolean; message: string }
@@ -276,9 +307,15 @@ export function listConnections() {
   return Object.entries(definitions).map(([key, definition]) => {
     const id = key as ConnectionId;
     const values = readCredentials(id, false);
-    const authMode = id === "codex" ? codexAuthMode() : undefined;
+    const authMode =
+      id === "codex"
+        ? codexAuthMode()
+        : id === "claude"
+          ? claudeAuthMode()
+          : undefined;
     const configured =
       authMode === "chatgpt" ||
+      authMode === "claude_code" ||
       (authMode !== "disabled" &&
         definition.fields.every((field) => Boolean(values[field.key]?.trim())));
     const test = connectionTests.get(id);
@@ -295,7 +332,9 @@ export function listConnections() {
         ? test?.message ||
           (authMode === "chatgpt"
             ? "Usando la cuenta ChatGPT iniciada en Codex en este ordenador. No se utiliza la API key."
-            : "Credenciales guardadas. Pulsa «Probar» para verificar el acceso.")
+            : authMode === "claude_code"
+              ? "Usando Claude Code con la sesión claude.ai de este ordenador. No se utiliza la API key."
+              : "Credenciales guardadas. Pulsa «Probar» para verificar el acceso.")
         : definition.description,
       fields: definition.fields,
     };
@@ -323,6 +362,7 @@ export function saveCredentials(id: ConnectionId, input: unknown) {
       "La clave de Apple debe estar en formato PEM (.p8).",
     );
   if (id === "codex") values.authMode = "api";
+  if (id === "claude") values.authMode = "api";
   vault[id] = values;
   saveVault(vault);
   connectionTests.delete(id);
@@ -401,6 +441,38 @@ function supportedEfforts(value: any, allowed: string[]): string[] {
 export async function discoverModels(
   provider: Provider,
 ): Promise<ModelDiscovery> {
+  if (provider === "claude" && claudeAuthMode() === "claude_code") {
+    if (!(await claudeCodeAccountStatus()))
+      throw new IntegrationError(
+        "La sesión claude.ai de Claude Code no está activa en este ordenador.",
+        409,
+      );
+    return {
+      models: [
+        {
+          id: "sonnet",
+          name: "Claude Sonnet",
+          efforts: ["low", "medium", "high"],
+          speeds: ["standard"],
+        },
+        {
+          id: "opus",
+          name: "Claude Opus",
+          efforts: ["low", "medium", "high"],
+          speeds: ["standard"],
+        },
+        {
+          id: "haiku",
+          name: "Claude Haiku",
+          efforts: [],
+          speeds: ["standard"],
+        },
+      ],
+      source: "Claude Code CLI · cuenta claude.ai",
+      message:
+        "Modelos por alias del CLI. Los niveles de esfuerzo dependen del modelo y se comprueban al ejecutar. Sin API key.",
+    };
+  }
   if (provider === "codex" && codexAuthMode() === "chatgpt") {
     if (!(await codexAccountStatus()))
       throw new IntegrationError(
@@ -640,6 +712,10 @@ function codemagicHeaders() {
 
 export function createIntegrationsRouter(): Router {
   const router = Router();
+  router.post("/connections/claude/local", async (_request, response) => {
+    await connectClaudeCode();
+    response.json(listConnections().find((item) => item.id === "claude"));
+  });
   router.post("/connections/codex/account", async (_request, response) => {
     await connectCodexAccount();
     response.json(listConnections().find((item) => item.id === "codex"));
@@ -656,6 +732,7 @@ export function createIntegrationsRouter(): Router {
     const id = connectionId(String(request.params.id));
     const vault = loadVault();
     if (id === "codex") vault.codex = { authMode: "disabled" };
+    else if (id === "claude") vault.claude = { authMode: "disabled" };
     else delete vault[id];
     saveVault(vault);
     connectionTests.delete(id);
@@ -665,9 +742,11 @@ export function createIntegrationsRouter(): Router {
       message:
         id === "codex"
           ? "Codex desconectado de AppBuilder. La sesión ChatGPT del ordenador sigue abierta."
-          : Object.keys(readCredentials(id, false)).length
-            ? "Credenciales locales eliminadas. El servidor sigue configurado mediante variables de entorno."
-            : "Conector desconectado.",
+          : id === "claude"
+            ? "Claude desconectado de AppBuilder. La sesión Claude Code del ordenador sigue abierta."
+            : Object.keys(readCredentials(id, false)).length
+              ? "Credenciales locales eliminadas. El servidor sigue configurado mediante variables de entorno."
+              : "Conector desconectado.",
     });
   });
   router.post("/connections/:id/test", async (request, response) => {
@@ -681,7 +760,9 @@ export function createIntegrationsRouter(): Router {
         message =
           id === "codex" && codexAuthMode() === "chatgpt"
             ? `Cuenta ChatGPT detectada. ${data.models.length} modelos en el catálogo de Codex; el acceso se comprueba al ejecutar.`
-            : `Acceso verificado. ${data.models.length} modelos visibles.`;
+            : id === "claude" && claudeAuthMode() === "claude_code"
+              ? `Claude Code autenticado con claude.ai. ${data.models.length} alias de modelos disponibles; el acceso se comprueba al ejecutar.`
+              : `Acceso verificado. ${data.models.length} modelos visibles.`;
       } else if (id === "codemagic") {
         await providerRequest("https://api.codemagic.io/apps", {
           headers: codemagicHeaders(),
@@ -746,6 +827,7 @@ export function createIntegrationsRouter(): Router {
     redactSecrets,
     integrationDirectory,
     codexAuthMode,
+    claudeAuthMode,
   });
 
   router.get("/builds", async (request, response) => {

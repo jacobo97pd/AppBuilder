@@ -109,6 +109,7 @@ export function Connections({
   const [editing, setEditing] = useState<Connection | null>(null);
   const [testing, setTesting] = useState("");
   const [connectingAccount, setConnectingAccount] = useState(false);
+  const [connectingClaude, setConnectingClaude] = useState(false);
   const [exploring, setExploring] = useState<Connection | null>(null);
   const [filter, setFilter] = useState("all");
   async function test(connection: Connection) {
@@ -130,7 +131,7 @@ export function Connections({
     try {
       await api(`/connections/${connection.id}`, { method: "DELETE" });
       await refresh();
-      notify("Credenciales guardadas eliminadas.");
+      notify("Conexión desconectada.");
     } catch (e) {
       notify(errorMessage(e), "error");
     }
@@ -145,6 +146,18 @@ export function Connections({
       notify(errorMessage(error), "error");
     } finally {
       setConnectingAccount(false);
+    }
+  }
+  async function connectClaudeCode() {
+    setConnectingClaude(true);
+    try {
+      await post("/connections/claude/local");
+      await refresh();
+      notify("Claude Code conectado con la sesión de este ordenador.");
+    } catch (error) {
+      notify(errorMessage(error), "error");
+    } finally {
+      setConnectingClaude(false);
     }
   }
   return (
@@ -229,6 +242,16 @@ export function Connections({
                       Usar cuenta ChatGPT
                     </button>
                   )}
+                  {c.id === "claude" && c.authMode !== "claude_code" && (
+                    <button
+                      className="button small dark"
+                      onClick={() => void connectClaudeCode()}
+                      disabled={connectingClaude}
+                    >
+                      {connectingClaude ? <Spinner /> : <Plug size={14} />}
+                      Usar Claude Code
+                    </button>
+                  )}
                   {c.status !== "missing" ? (
                     <>
                       <button
@@ -252,16 +275,17 @@ export function Connections({
                           <ArrowRight size={13} />
                         </button>
                       )}
-                      {c.authMode !== "chatgpt" && (
-                        <button
-                          className="icon-button"
-                          title="Editar credenciales"
-                          aria-label={`Editar ${c.name}`}
-                          onClick={() => setEditing(c)}
-                        >
-                          <KeyRound size={16} />
-                        </button>
-                      )}
+                      {c.authMode !== "chatgpt" &&
+                        c.authMode !== "claude_code" && (
+                          <button
+                            className="icon-button"
+                            title="Editar credenciales"
+                            aria-label={`Editar ${c.name}`}
+                            onClick={() => setEditing(c)}
+                          >
+                            <KeyRound size={16} />
+                          </button>
+                        )}
                       <button
                         className="icon-button"
                         title="Eliminar credenciales guardadas"
@@ -277,13 +301,19 @@ export function Connections({
                       onClick={() => setEditing(c)}
                     >
                       <Plug size={14} />
-                      {c.id === "codex" ? "Usar API key" : "Conectar"}
+                      {["codex", "claude"].includes(c.id)
+                        ? "Usar API key"
+                        : "Conectar"}
                     </button>
                   )}
                   <a
                     className="connection-docs"
                     aria-label={`Documentación de ${c.name}`}
-                    href={meta.docs}
+                    href={
+                      c.id === "claude" && c.authMode === "claude_code"
+                        ? "https://code.claude.com/docs/en/setup"
+                        : meta.docs
+                    }
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -404,7 +434,7 @@ function ConnectionModal({
             <p>
               {connection.id === "codex"
                 ? "Esta opción usa una API key con facturación independiente. Para usar tu suscripción, pulsa «Usar cuenta ChatGPT» en la tarjeta de Codex."
-                : "Esta conexión usa una API key con facturación independiente. Anthropic no permite ofrecer inicio de sesión de Claude en esta app sin aprobación previa."}
+                : "Esta opción usa una API key con facturación independiente. Para usar Claude Code instalado e iniciado en tu ordenador, pulsa «Usar Claude Code» en la tarjeta de Claude."}
             </p>
           </div>
         )}

@@ -777,7 +777,10 @@ function AgentPanel({
             (candidate) => candidate.id === current.model,
           );
           const model =
-            selected?.id || current.model || data.models[0]?.id || "";
+            selected?.id ||
+            (connection?.authMode === "claude_code"
+              ? data.models[0]?.id || ""
+              : current.model || data.models[0]?.id || "");
           return {
             ...current,
             model,
@@ -800,7 +803,7 @@ function AgentPanel({
     return () => {
       cancelled = true;
     };
-  }, [provider, connected, setDraft]);
+  }, [provider, connected, connection?.authMode, setDraft]);
   async function run() {
     if (
       !prompt.trim() ||
@@ -933,7 +936,7 @@ function AgentPanel({
                   ? connection.detail
                   : provider === "codex"
                     ? "Conecta tu cuenta ChatGPT o añade una API key."
-                    : "Añade tu clave API para trabajar con el agente."}
+                    : "Conecta Claude Code del ordenador o añade una API key."}
               </p>
             </div>
             <button aria-label="Configurar agente" onClick={onConnections}>

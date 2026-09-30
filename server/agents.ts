@@ -26,6 +26,7 @@ import {
   createJob,
   appendJob,
   finishJob,
+  killProcessTree,
   registerJobCancellation,
 } from "./jobs.js";
 import { getProject, projectDir } from "./workspace.js";
@@ -42,6 +43,7 @@ type AgentDependencies = {
   redactSecrets: (text: string) => string;
   integrationDirectory: () => string;
   codexAuthMode: () => "api" | "chatgpt" | "disabled";
+  claudeAuthMode: () => "api" | "claude_code" | "disabled";
 };
 type AgentInput = {
   provider: Provider;
@@ -77,6 +79,40 @@ export async function codexAccountStatus(): Promise<boolean> {
       },
     );
     return /Logged in using ChatGPT/i.test(`${stdout}\n${stderr}`);
+  } catch {
+    return false;
+  }
+}
+
+function claudeExecutable(): string | undefined {
+  const environment = agentEnvironment();
+  const searchPath = Object.entries(environment).find(
+    ([key]) => key.toUpperCase() === "PATH",
+  )?.[1];
+  for (const directory of searchPath?.split(path.delimiter) || []) {
+    if (!path.isAbsolute(directory)) continue;
+    const executable = path.join(
+      directory,
+      process.platform === "win32" ? "claude.exe" : "claude",
+    );
+    if (existsSync(executable)) return executable;
+  }
+  return undefined;
+}
+
+/** Use only Claude Code's own signed-in claude.ai session, never an API key. */
+export async function claudeCodeAccountStatus(): Promise<boolean> {
+  const executable = claudeExecutable();
+  if (!executable) return false;
+  try {
+    const { stdout } = await execFileAsync(executable, ["auth", "status"], {
+      env: agentEnvironment(),
+      windowsHide: true,
+      timeout: 15_000,
+      maxBuffer: 10_000,
+    });
+    const status = JSON.parse(stdout);
+    return status.loggedIn === true && status.authMethod === "claude.ai";
   } catch {
     return false;
   }
@@ -285,13 +321,13 @@ function sessionFile(
   dependencies: AgentDependencies,
   projectId: string,
   provider: Provider,
-  account = false,
+  account?: "chatgpt" | "claude-code",
 ) {
   const folder = path.join(dependencies.integrationDirectory(), "sessions");
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   return path.join(
     folder,
-    `${projectId}-${provider}${account ? "-chatgpt" : ""}.json`,
+    `${projectId}-${provider}${account ? `-${account}` : ""}.json`,
   );
 }
 
@@ -532,6 +568,100 @@ async function runClaude(
     throw new Error("Claude cerró la sesión antes de completar el turno.");
 }
 
+async function runClaudeCode(
+  input: AgentInput,
+  root: string,
+  session: string | undefined,
+  saveSession: (id: string) => void,
+  signal: AbortSignal,
+  log: (text: string) => void,
+) {
+  const executable = claudeExecutable();
+  if (!executable)
+    throw new Error(
+      "Claude Code no está instalado en el ordenador del servidor.",
+    );
+  if (signal.aborted) throw new Error("Tarea cancelada.");
+  const args = [
+    "--restricted",
+    "--tools",
+    "Read,Write,Edit,Glob,Grep",
+    "--disallowedTools",
+    "mcp__*",
+    "--permission-mode",
+    "acceptEdits",
+    "--permission-prompts",
+    "none",
+    "--max-turns",
+    "40",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    ...(session ? ["--resume", session] : []),
+    ...(input.model ? ["--model", input.model] : []),
+    ...(input.effort ? ["--effort", input.effort] : []),
+    "--print",
+  ];
+  const child = spawn(executable, args, {
+    cwd: root,
+    env: agentEnvironment(),
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let completed = false;
+  let failure = "";
+  let stderr = "";
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", (line) => {
+    let event: any;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (
+      typeof event.session_id === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(event.session_id)
+    )
+      saveSession(event.session_id);
+    if (event.type === "assistant")
+      for (const item of event.message?.content || [])
+        if (item.type === "tool_use" && typeof item.name === "string")
+          log(`→ ${item.name}\n`);
+    if (event.type === "result") {
+      completed = event.subtype === "success" && event.is_error !== true;
+      if (completed && typeof event.result === "string")
+        log(`${event.result}\n`);
+      else if (typeof event.result === "string") failure = event.result;
+    }
+  });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr = (stderr + chunk).slice(-2_000);
+  });
+  child.stdin.on("error", () => {});
+  const abort = () => {
+    void killProcessTree(child).catch(() => child.kill());
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    child.stdin.end(input.prompt);
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    if (signal.aborted) throw new Error("Tarea cancelada.");
+    if (code !== 0 || !completed)
+      throw new Error(
+        (failure || stderr).trim().slice(-1_000) ||
+          "Claude Code cerró la sesión sin completar la tarea.",
+      );
+  } finally {
+    signal.removeEventListener("abort", abort);
+    lines.close();
+  }
+}
+
 export function mountAgentRoutes(
   router: Router,
   dependencies: AgentDependencies,
@@ -567,10 +697,17 @@ export function mountAgentRoutes(
     const provider: Provider = body.provider;
     const account =
       provider === "codex" && dependencies.codexAuthMode() === "chatgpt";
+    const claudeCode =
+      provider === "claude" && dependencies.claudeAuthMode() === "claude_code";
     const credentials = dependencies.readCredentials(provider);
     if (account && !(await codexAccountStatus()))
       throw invalid(
         "Inicia sesión con ChatGPT mediante Codex en el ordenador que ejecuta AppBuilder.",
+        409,
+      );
+    if (claudeCode && !(await claudeCodeAccountStatus()))
+      throw invalid(
+        "Inicia sesión con tu suscripción en Claude Code en el ordenador que ejecuta AppBuilder.",
         409,
       );
     if (effort) {
@@ -613,7 +750,12 @@ export function mountAgentRoutes(
       throw error;
     }
     const root = projectDir(projectId);
-    const filename = sessionFile(dependencies, projectId, provider, account);
+    const filename = sessionFile(
+      dependencies,
+      projectId,
+      provider,
+      account ? "chatgpt" : claudeCode ? "claude-code" : undefined,
+    );
     const session = input.newSession ? undefined : readSession(filename);
     const controller = new AbortController();
     let resolveCompletion!: () => void;
@@ -627,7 +769,7 @@ export function mountAgentRoutes(
     const log = (text: string) =>
       appendJob(job.id, dependencies.redactSecrets(text));
     log(
-      `${provider === "codex" ? "Codex" : "Claude Agent"} · ${input.model || "modelo predeterminado"}${effort ? ` · ${effort}` : ""}\n${session ? "Continuando conversación" : "Nueva conversación"}\nPunto de restauración: ${checkpoint.hash}${checkpoint.created ? " (creado)" : ""}\n\n`,
+      `${provider === "codex" ? "Codex" : claudeCode ? "Claude Code" : "Claude Agent"} · ${input.model || "modelo predeterminado"}${effort ? ` · ${effort}` : ""}\n${session ? "Continuando conversación" : "Nueva conversación"}\nPunto de restauración: ${checkpoint.hash}${checkpoint.created ? " (creado)" : ""}\n\n`,
     );
     response.status(202).json(job);
     const timeout = setTimeout(
@@ -652,6 +794,15 @@ export function mountAgentRoutes(
             controller.signal,
             log,
             dependencies,
+          );
+        else if (claudeCode)
+          await runClaudeCode(
+            input,
+            root,
+            session,
+            saveSession,
+            controller.signal,
+            log,
           );
         else
           await runClaude(

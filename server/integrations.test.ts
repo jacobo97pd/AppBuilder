@@ -436,3 +436,26 @@ test("disconnect blocks Codex access even with an API key in the environment", a
     "missing",
   );
 });
+
+test("Claude Code mode uses the local account and never falls back to an API key", async () => {
+  const { claudeAuthMode, connectClaudeCode, readCredentials } =
+    await import("./integrations.js");
+  await connectClaudeCode(async () => true);
+  assert.equal(claudeAuthMode(), "claude_code");
+  assert.equal(readCredentials("claude").apiKey, undefined);
+  const configured = await api("/connections");
+  const connection = configured.body.find((item: any) => item.id === "claude");
+  assert.equal(connection.status, "connected");
+  assert.equal(connection.authMode, "claude_code");
+  process.env.ANTHROPIC_API_KEY = "sk-ant-environment-test-123456";
+  const { agentEnvironment } = await import("./agents.js");
+  assert.equal(agentEnvironment().ANTHROPIC_API_KEY, undefined);
+  await api("/connections/claude", "DELETE");
+  assert.throws(() => readCredentials("claude"), /Conecta Claude/);
+  const disconnected = await api("/connections");
+  assert.equal(
+    disconnected.body.find((item: any) => item.id === "claude").status,
+    "missing",
+  );
+  delete process.env.ANTHROPIC_API_KEY;
+});
