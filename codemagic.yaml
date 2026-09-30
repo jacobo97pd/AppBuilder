@@ -1,4 +1,4 @@
-# These workflows produce web assets and TEST native apps, not store releases.
+# These workflows produce web assets, test native apps, and a signed iOS App Store upload.
 # server_url is public configuration. Never put API tokens in this input.
 workflows:
   web-check:
@@ -116,3 +116,48 @@ workflows:
     artifacts:
       - build/AppBuilder-simulator.zip
       - build/ios-build.log
+
+  ios-release:
+    name: AppBuilder · iOS App Store release
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    integrations:
+      app_store_connect: AppBuilder Apple
+
+    environment:
+      node: 22.12.0
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: dev.appbuilder.studio
+
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+
+      - name: Build web client
+        script: npm run build
+
+      - name: Sync Capacitor iOS project
+        script: npx cap sync ios
+
+      - name: Apply Codemagic provisioning profiles
+        script: xcode-project use-profiles
+
+      - name: Build signed IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa \
+            --workspace ios/App/App.xcodeproj/project.xcworkspace \
+            --scheme App
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Upload to App Store Connect/TestFlight only. No beta review or production release.
+        submit_to_testflight: false
