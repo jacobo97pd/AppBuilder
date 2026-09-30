@@ -10,6 +10,7 @@ import { createCoreRouter } from "./core.js";
 import { createIntegrationsRouter, redactSecrets } from "./integrations.js";
 import { configureJobRedaction } from "./jobs.js";
 import { createPreviewRouter } from "./preview.js";
+import { APP_VERSION } from "../version.js";
 
 const nativeOrigins = new Set([
   "capacitor://localhost",
@@ -148,14 +149,14 @@ export function createApp(
         authenticated: true,
         mode: "local",
         execution: "host",
-        version: "0.1.0",
+        version: APP_VERSION,
       });
     }
     res.json({
       authenticated: authenticated(req),
       mode: configuredToken ? "remote" : "local",
       execution: "host",
-      version: "0.1.0",
+      version: APP_VERSION,
     });
   });
   const attempts = new Map<string, { count: number; until: number }>();
@@ -184,7 +185,7 @@ export function createApp(
       authenticated: true,
       mode: "remote",
       execution: "host",
-      version: "0.1.0",
+      version: APP_VERSION,
     });
   });
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {

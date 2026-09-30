@@ -30,6 +30,7 @@ import {
 import { getProject, projectDir } from "./workspace.js";
 import { createCheckpoint } from "./core.js";
 import type { ConnectionId, ModelDiscovery, Provider } from "./integrations.js";
+import { APP_VERSION } from "../version.js";
 
 type AgentDependencies = {
   readCredentials: (
@@ -195,7 +196,7 @@ export async function codexModelMetadata(
         clientInfo: {
           name: "appbuilder",
           title: "AppBuilder",
-          version: "0.1.0",
+          version: APP_VERSION,
         },
       },
     });
