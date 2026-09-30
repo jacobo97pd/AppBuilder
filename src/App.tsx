@@ -264,7 +264,7 @@ export function App() {
             <span className="profile-avatar">J</span>
             <div>
               <strong>Tu estudio personal</strong>
-              <small>AppBuilder · v0.1.1</small>
+              <small>AppBuilder · v0.1.2</small>
             </div>
             <ShieldCheck size={17} />
           </div>
