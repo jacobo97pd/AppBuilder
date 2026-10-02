@@ -18,6 +18,17 @@ import { api, errorMessage, post } from "./api";
 import type { Build, Connection, Project, ToastFn } from "./types";
 import { Empty, Modal, relativeDate, Spinner, Tag } from "./ui";
 
+const LAST_BUILD_KEY = "appbuilder.lastBuild";
+const activeStatuses = [
+  "building",
+  "queued",
+  "preparing",
+  "in_progress",
+  "fetching",
+  "testing",
+  "publishing",
+];
+
 export function Builds({
   connections,
   projects,
@@ -58,8 +69,8 @@ export function Builds({
     <main className="dashboard builds-page">
       <div className="section-page-heading">
         <div>
-          <div className="welcome-eyebrow">
-            <Layers3 size={14} /> DE CÓDIGO A APLICACIÓN
+          <div className="eyebrow">
+            <Layers3 size={14} /> De código a aplicación
           </div>
           <h1>
             Listo para despegar<span className="accent-period">.</span>
@@ -67,39 +78,44 @@ export function Builds({
           <p>Compila, sigue el progreso y descarga tus artefactos.</p>
         </div>
         <button
-          className="button dark"
+          className="button primary"
           disabled={!connected}
+          title={connected ? undefined : "Conecta Codemagic para empezar"}
           onClick={() => setCreating(true)}
         >
-          <Plus size={16} />
+          <Plus size={17} />
           Nueva build
         </button>
       </div>
-      <div className="build-pipeline">
-        <div>
+      <ol className="build-pipeline">
+        <li>
           <span>
-            <GitBranch size={22} />
+            <GitBranch size={21} />
           </span>
-          <strong>Tu repositorio</strong>
-          <small>Una versión del código</small>
-        </div>
-        <ArrowRight size={20} />
-        <div>
+          <div>
+            <strong>Tu repositorio</strong>
+            <small>Haz commit y push de tu código</small>
+          </div>
+        </li>
+        <li>
           <span>
-            <Workflow size={22} />
+            <Workflow size={21} />
           </span>
-          <strong>Codemagic</strong>
-          <small>Compilación en la nube</small>
-        </div>
-        <ArrowRight size={20} />
-        <div>
+          <div>
+            <strong>Codemagic</strong>
+            <small>Compila en la nube</small>
+          </div>
+        </li>
+        <li>
           <span>
-            <Layers3 size={22} />
+            <Layers3 size={21} />
           </span>
-          <strong>Tu aplicación</strong>
-          <small>Artefactos para distribuir</small>
-        </div>
-      </div>
+          <div>
+            <strong>Tu aplicación</strong>
+            <small>Descarga los artefactos</small>
+          </div>
+        </li>
+      </ol>
       <section className="builds-list">
         <div className="section-heading">
           <h2>
@@ -108,11 +124,11 @@ export function Builds({
           </h2>
           {connected && (
             <button
-              className="button text"
+              className="button ghost"
               disabled={loading}
               onClick={() => void refresh()}
             >
-              {loading ? <Spinner /> : <RefreshCw size={15} />}Actualizar
+              {loading ? <Spinner /> : <RefreshCw size={16} />}Actualizar
             </button>
           )}
         </div>
@@ -121,9 +137,9 @@ export function Builds({
             icon={<Layers3 size={30} />}
             title="Tu primera build te espera"
             action={
-              <button className="button dark" onClick={onConnections}>
+              <button className="button primary" onClick={onConnections}>
                 Conectar Codemagic
-                <ArrowRight size={16} />
+                <ArrowRight size={17} />
               </button>
             }
           >
@@ -135,7 +151,10 @@ export function Builds({
             icon={<CircleAlert size={28} />}
             title="No pudimos consultar las builds"
             action={
-              <button className="button light" onClick={() => void refresh()}>
+              <button
+                className="button secondary"
+                onClick={() => void refresh()}
+              >
                 Volver a intentar
               </button>
             }
@@ -146,16 +165,27 @@ export function Builds({
           <Empty
             icon={loading ? <Spinner /> : <Workflow size={28} />}
             title={loading ? "Consultando Codemagic" : "Aún no hay builds"}
+            action={
+              loading ? undefined : (
+                <button
+                  className="button primary"
+                  onClick={() => setCreating(true)}
+                >
+                  <Play size={16} />
+                  Iniciar mi primera build
+                </button>
+              )
+            }
           >
             Tus compilaciones aparecerán aquí con su estado y sus resultados.
           </Empty>
         ) : (
           <div className="build-table">
             <div className="build-table-head">
-              <span>WORKFLOW</span>
-              <span>ESTADO</span>
-              <span>RAMA</span>
-              <span>INICIO</span>
+              <span>Workflow</span>
+              <span>Estado</span>
+              <span>Rama</span>
+              <span>Inicio</span>
             </div>
             {builds.map((build) => (
               <button
@@ -176,13 +206,13 @@ export function Builds({
                   <BuildStatus status={build.status} />
                 </span>
                 <span>
-                  <GitBranch size={13} />
+                  <GitBranch size={14} />
                   {build.branch || "—"}
                 </span>
                 <span>
                   {build.startedAt ? relativeDate(build.startedAt) : "—"}
                 </span>
-                <ArrowRight size={15} />
+                <ArrowRight size={16} />
               </button>
             ))}
           </div>
@@ -261,17 +291,9 @@ export function Builds({
               Ver registros en Codemagic
               <ExternalLink size={14} />
             </a>
-            {[
-              "building",
-              "queued",
-              "preparing",
-              "in_progress",
-              "fetching",
-              "testing",
-              "publishing",
-            ].includes(details.status) && (
+            {activeStatuses.includes(details.status) && (
               <button
-                className="button light"
+                className="button secondary"
                 onClick={async () => {
                   try {
                     await post(`/builds/${details.id}/cancel`);
@@ -296,27 +318,50 @@ export function Builds({
 function BuildStatus({ status }: { status: string }) {
   const success = ["finished", "succeeded", "success"].includes(status);
   const error = ["failed", "error", "timeout"].includes(status);
+  const active = activeStatuses.includes(status);
   return (
-    <Tag tone={success ? "green" : error ? "red" : ""}>
+    <Tag tone={success ? "success" : error ? "danger" : active ? "info" : ""}>
       {success ? (
-        <Check size={12} />
+        <Check size={13} />
       ) : error ? (
-        <CircleAlert size={12} />
+        <CircleAlert size={13} />
       ) : (
-        <Clock3 size={12} />
+        <Clock3 size={13} />
       )}
       {(
         {
           finished: "Completada",
+          succeeded: "Completada",
+          success: "Completada",
           building: "Compilando",
           queued: "En cola",
-          failed: "Fallida",
-          canceled: "Cancelada",
           preparing: "Preparando",
+          in_progress: "En curso",
+          fetching: "Descargando código",
+          testing: "Probando",
+          publishing: "Publicando",
+          failed: "Fallida",
+          error: "Fallida",
+          timeout: "Tiempo agotado",
+          canceled: "Cancelada",
+          cancelled: "Cancelada",
+          skipped: "Omitida",
         } as Record<string, string>
       )[status] || status}
     </Tag>
   );
+}
+function readLastBuild() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAST_BUILD_KEY) || "{}");
+    return {
+      appId: typeof saved.appId === "string" ? saved.appId : "",
+      workflowId: typeof saved.workflowId === "string" ? saved.workflowId : "",
+      branch: typeof saved.branch === "string" ? saved.branch : "main",
+    };
+  } catch {
+    return { appId: "", workflowId: "", branch: "main" };
+  }
 }
 function NewBuild({
   projects,
@@ -327,9 +372,11 @@ function NewBuild({
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
-  const [appId, setAppId] = useState("");
-  const [workflowId, setWorkflowId] = useState("");
-  const [branch, setBranch] = useState("main");
+  // Most builds repeat the same app and workflow, so start from the last ones.
+  const [last] = useState(readLastBuild);
+  const [appId, setAppId] = useState(last.appId);
+  const [workflowId, setWorkflowId] = useState(last.workflowId);
+  const [branch, setBranch] = useState(last.branch || "main");
   const [projectId, setProjectId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -351,6 +398,14 @@ function NewBuild({
               branch,
               projectId: projectId || undefined,
             });
+            try {
+              localStorage.setItem(
+                LAST_BUILD_KEY,
+                JSON.stringify({ appId, workflowId, branch }),
+              );
+            } catch {
+              /* Remembering the form is optional. */
+            }
             await onCreated();
           } catch (e) {
             setError(errorMessage(e));
@@ -412,8 +467,8 @@ function NewBuild({
             Codemagic.
           </p>
         </div>
-        <button className="button dark" disabled={busy}>
-          {busy ? <Spinner /> : <Play size={15} />}Iniciar build
+        <button className="button primary" disabled={busy}>
+          {busy ? <Spinner /> : <Play size={16} />}Iniciar build
         </button>
       </form>
     </Modal>

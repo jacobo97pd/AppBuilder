@@ -9,36 +9,33 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  Bot,
   Braces,
   Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Code2,
-  File,
   FileCode2,
+  FileJson,
   FilePlus2,
+  FileText,
   Folder,
+  FolderOpen,
   GitBranch,
   GitCommitHorizontal,
-  History,
-  Maximize2,
   Monitor,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
-  Plus,
+  Plug,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
-  Send,
   Smartphone,
   Sparkles,
   Square,
   Terminal as TerminalIcon,
-  Trash2,
-  Unplug,
-  X,
 } from "lucide-react";
 import { api, errorMessage, post } from "./api";
 import type {
@@ -50,7 +47,17 @@ import type {
   Project,
   ToastFn,
 } from "./types";
-import { Empty, Modal, relativeDate, Spinner, StatusDot, Tag } from "./ui";
+import {
+  Empty,
+  isCompactScreen,
+  isTouchInput,
+  Modal,
+  relativeDate,
+  Spinner,
+  StatusDot,
+  Tag,
+  type Tone,
+} from "./ui";
 
 type Tab = "code" | "agent" | "preview" | "terminal" | "git";
 type AgentDraft = {
@@ -86,7 +93,8 @@ export function Workspace({
   onChange: () => void;
   registerGuard?: (save: (() => Promise<boolean>) | null) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("code");
+  // A project created from an idea opens on the agent, with the idea ready to send.
+  const [tab, setTab] = useState<Tab>(initialPrompt ? "agent" : "code");
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activeFile, setActiveFile] = useState("");
   const [content, setContent] = useState("");
@@ -97,7 +105,8 @@ export function Workspace({
   const [jobs, setJobs] = useState<Job[]>([]);
   const [revision, setRevision] = useState(0);
   const [fileFilter, setFileFilter] = useState("");
-  const [explorer, setExplorer] = useState(true);
+  // On phones the explorer is an overlay, so it starts closed.
+  const [explorer, setExplorer] = useState(() => !isCompactScreen());
   const [rightPanel, setRightPanel] = useState(true);
   const [pendingFile, setPendingFile] = useState<string | null>(null);
   const [agentDraft, setAgentDraft] = useState<AgentDraft>({
@@ -109,11 +118,16 @@ export function Workspace({
   });
   const [agentStarting, setAgentStarting] = useState(false);
   const [branch, setBranch] = useState("?");
+  const [pendingChanges, setPendingChanges] = useState(0);
+  const updateGitSummary = useCallback((state: GitState) => {
+    setBranch(state.branch);
+    setPendingChanges(state.changes.length);
+  }, []);
   useEffect(() => {
     let stopped = false;
     api<GitState>(`/projects/${project.id}/git`)
       .then((state) => {
-        if (!stopped) setBranch(state.branch);
+        if (!stopped) updateGitSummary(state);
       })
       .catch(() => {
         if (!stopped) setBranch("Git");
@@ -121,7 +135,7 @@ export function Workspace({
     return () => {
       stopped = true;
     };
-  }, [project.id, revision]);
+  }, [project.id, revision, updateGitSummary]);
   const dirty = content !== saved;
   const activeRef = useRef(activeFile);
   activeRef.current = activeFile;
@@ -145,6 +159,9 @@ export function Workspace({
   const saveInFlight = useRef<Promise<boolean> | null>(null);
   const runningAgent = jobs.some(
     (job) => job.kind === "agent" && job.status === "running",
+  );
+  const runningTerminal = jobs.some(
+    (job) => job.kind === "terminal" && job.status === "running",
   );
   const runningAgentRef = useRef(runningAgent);
   runningAgentRef.current = runningAgent;
@@ -319,6 +336,7 @@ export function Workspace({
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
   function selectFile(path: string) {
+    if (isCompactScreen()) setExplorer(false);
     if (path === activeRef.current || saveInFlight.current) return;
     if (dirtyRef.current) {
       setPendingFile(path);
@@ -372,6 +390,10 @@ export function Workspace({
       }}
     />
   );
+  const visibleFiles = files.filter(
+    (f) =>
+      !fileFilter || f.path.toLowerCase().includes(fileFilter.toLowerCase()),
+  );
   return (
     <main className="workspace">
       <div className="workspace-toolbar">
@@ -383,15 +405,15 @@ export function Workspace({
               else onBack();
             }}
             aria-label="Volver a proyectos"
+            title="Volver a proyectos"
           >
-            <ArrowLeft size={17} />
+            <ArrowLeft size={18} />
           </button>
-          <span className="workspace-branch">
+          <span className="workspace-branch" title="Rama de Git">
             <GitBranch size={14} />
             {branch}
           </span>
-          <span className="workspace-separator" />
-          <span className="workspace-save-status">
+          <span className={`workspace-save-status ${dirty ? "is-dirty" : ""}`}>
             {dirty ? (
               <>
                 <span className="unsaved-dot" />
@@ -399,7 +421,7 @@ export function Workspace({
               </>
             ) : (
               <>
-                <Check size={13} />
+                <Check size={14} />
                 Guardado
               </>
             )}
@@ -407,21 +429,23 @@ export function Workspace({
         </div>
         <div>
           <button
-            className="button small light"
+            className="button small secondary"
             aria-label="Guardar archivo"
+            title="Guardar (Ctrl + S)"
             onClick={() => void save()}
             disabled={
               !dirty || saving || loading || runningAgent || agentStarting
             }
           >
-            {saving ? <Spinner /> : <Save size={14} />}
+            {saving ? <Spinner /> : <Save size={15} />}
             <span>Guardar</span>
           </button>
           <button
-            className="button small dark"
+            className="button small primary"
+            title="Abrir la vista previa"
             onClick={() => setTab("preview")}
           >
-            <Play size={14} />
+            <Play size={15} />
             Ejecutar
           </button>
         </div>
@@ -431,14 +455,26 @@ export function Workspace({
           <button
             key={t.id}
             className={tab === t.id ? "active" : ""}
+            aria-current={tab === t.id ? "page" : undefined}
             onClick={() => setTab(t.id)}
           >
-            <t.icon size={16} />
+            <span className="tab-icon">
+              <t.icon size={17} />
+              {((t.id === "terminal" && runningTerminal) ||
+                (t.id === "agent" && runningAgent)) && (
+                <span className="tab-live" aria-hidden="true" />
+              )}
+            </span>
             <span>{t.name}</span>
-            {t.id === "terminal" &&
-              jobs.some(
-                (j) => j.kind === "terminal" && j.status === "running",
-              ) && <StatusDot active />}
+            {t.id === "git" && pendingChanges > 0 && (
+              <span
+                className="tab-badge"
+                aria-hidden="true"
+                title={`${pendingChanges} archivos con cambios`}
+              >
+                {pendingChanges > 99 ? "99+" : pendingChanges}
+              </span>
+            )}
           </button>
         ))}
         <div className="workspace-tabs-spacer" />
@@ -446,9 +482,15 @@ export function Workspace({
           <button
             className={`assistant-toggle ${rightPanel ? "enabled" : ""}`}
             onClick={() => setRightPanel(!rightPanel)}
-            title="Mostrar u ocultar agente"
+            aria-pressed={rightPanel}
+            title={rightPanel ? "Ocultar asistente" : "Mostrar asistente"}
           >
-            <Sparkles size={15} /> Asistente
+            {rightPanel ? (
+              <PanelRightClose size={16} />
+            ) : (
+              <PanelRightOpen size={16} />
+            )}
+            Asistente
           </button>
         )}
       </div>
@@ -458,20 +500,28 @@ export function Workspace({
             <section
               className={`editor-layout ${explorer ? "" : "hide-explorer"}`}
             >
+              {explorer && (
+                <button
+                  className="explorer-scrim"
+                  aria-label="Cerrar explorador"
+                  onClick={() => setExplorer(false)}
+                />
+              )}
               <aside className="file-explorer">
                 <div className="panel-heading">
-                  <span>EXPLORADOR</span>
+                  <span>Archivos</span>
                   <button
                     className="icon-button"
                     aria-label="Nuevo archivo"
+                    title="Nuevo archivo"
                     disabled={saving || runningAgent || agentStarting}
                     onClick={() => setNewFile(true)}
                   >
-                    <FilePlus2 size={16} />
+                    <FilePlus2 size={17} />
                   </button>
                 </div>
                 <label className="file-filter">
-                  <Search size={13} />
+                  <Search size={14} />
                   <input
                     placeholder="Buscar archivo…"
                     aria-label="Buscar archivo"
@@ -481,49 +531,39 @@ export function Workspace({
                 </label>
                 <div className="file-tree">
                   <div className="file-root">
-                    <ChevronDown size={13} />
-                    <Folder size={14} />
+                    <ChevronDown size={14} />
+                    <FolderOpen size={15} />
                     <strong>{project.name}</strong>
                   </div>
-                  {files
-                    .filter(
-                      (f) =>
-                        !fileFilter ||
-                        f.path.toLowerCase().includes(fileFilter.toLowerCase()),
-                    )
-                    .map((f) => (
-                      <button
-                        className={`file-row ${f.type === "directory" ? "directory" : ""} ${f.path === activeFile ? "active" : ""}`}
-                        key={f.path}
-                        disabled={f.type === "directory"}
-                        style={{
-                          paddingLeft: `${14 + f.path.split("/").length * 9}px`,
-                        }}
-                        onClick={() => selectFile(f.path)}
-                      >
-                        {f.type === "directory" ? (
-                          <Folder size={14} />
-                        ) : (
-                          <FileCode2
-                            size={14}
-                            className={
-                              f.name.endsWith(".css")
-                                ? "css-file"
-                                : f.name.endsWith(".html")
-                                  ? "html-file"
-                                  : "js-file"
-                            }
-                          />
-                        )}
-                        <span>{f.name}</span>
-                        {f.path === activeFile && dirty && (
-                          <span className="unsaved-dot" />
-                        )}
-                      </button>
-                    ))}
+                  {visibleFiles.map((f) => (
+                    <button
+                      className={`file-row ${f.type === "directory" ? "directory" : ""} ${f.path === activeFile ? "active" : ""}`}
+                      key={f.path}
+                      disabled={f.type === "directory"}
+                      style={{
+                        paddingLeft: `${4 + f.path.split("/").length * 14}px`,
+                      }}
+                      onClick={() => selectFile(f.path)}
+                    >
+                      {f.type === "directory" ? (
+                        <Folder size={15} className="folder-icon" />
+                      ) : (
+                        <FileIcon name={f.name} />
+                      )}
+                      <span>{f.name}</span>
+                      {f.path === activeFile && dirty && (
+                        <span className="unsaved-dot" />
+                      )}
+                    </button>
+                  ))}
+                  {!visibleFiles.length && fileFilter && (
+                    <p className="file-empty">
+                      Ningún archivo coincide con «{fileFilter}».
+                    </p>
+                  )}
                 </div>
                 <div className="explorer-foot">
-                  <ShieldCheckIcon />
+                  <Check size={13} />
                   Archivos en tu servidor
                 </div>
               </aside>
@@ -531,13 +571,17 @@ export function Workspace({
                 <div className="file-tabbar">
                   <button
                     className="icon-button explorer-toggle"
-                    aria-label="Mostrar archivos"
+                    aria-label={
+                      explorer ? "Ocultar archivos" : "Mostrar archivos"
+                    }
+                    aria-expanded={explorer}
+                    title={explorer ? "Ocultar archivos" : "Mostrar archivos"}
                     onClick={() => setExplorer(!explorer)}
                   >
-                    <Folder size={16} />
+                    {explorer ? <FolderOpen size={17} /> : <Folder size={17} />}
                   </button>
                   <div className="active-file-tab">
-                    <FileCode2 size={14} />
+                    <FileIcon name={activeFile || "archivo"} />
                     {activeFile.split("/").pop() || "Archivo"}
                     {dirty && <span className="unsaved-dot" />}
                   </div>
@@ -545,18 +589,19 @@ export function Workspace({
                   <button
                     className="icon-button"
                     aria-label="Recargar archivo"
+                    title="Recargar desde el servidor"
                     disabled={!activeFile || saving}
                     onClick={() => {
                       if (dirty) setPendingFile(activeFile);
                       else void read(activeFile);
                     }}
                   >
-                    <RefreshCw size={14} />
+                    <RefreshCw size={15} />
                   </button>
                 </div>
                 <div className="editor-breadcrumb">
                   {project.name}
-                  <ChevronRight size={12} />
+                  <ChevronRight size={13} />
                   {activeFile}
                 </div>
                 <div className="code-editor">
@@ -597,10 +642,16 @@ export function Workspace({
                 </div>
                 <div className="editor-statusbar">
                   <span>
-                    <GitBranch size={12} />
+                    <GitBranch size={13} />
                     {branch}
                   </span>
-                  <span>UTF-8</span>
+                  {(runningAgent || agentStarting) && (
+                    <span className="editor-locked">
+                      <Sparkles size={13} />
+                      El agente está editando · solo lectura
+                    </span>
+                  )}
+                  <span className="statusbar-push">UTF-8</span>
                   <span>{activeFile.split(".").pop()?.toUpperCase()}</span>
                   <span>{content.split("\n").length} líneas</span>
                 </div>
@@ -634,6 +685,7 @@ export function Workspace({
             project={project}
             revision={revision}
             notify={notify}
+            onStatus={updateGitSummary}
             canRestore={!dirty && !saving && !runningAgent && !agentStarting}
             beforeCommit={async () => {
               if (runningAgentRef.current || agentStarting) {
@@ -671,7 +723,7 @@ export function Workspace({
         >
           <div className="form-footer">
             <button
-              className="button light"
+              className="button secondary"
               disabled={saving}
               onClick={() => {
                 const next = pendingFile;
@@ -686,7 +738,7 @@ export function Workspace({
               Descartar cambios
             </button>
             <button
-              className="button dark"
+              className="button primary"
               disabled={saving}
               onClick={async () => {
                 const next = pendingFile;
@@ -704,8 +756,17 @@ export function Workspace({
     </main>
   );
 }
-function ShieldCheckIcon() {
-  return <Check size={12} />;
+function FileIcon({ name }: { name: string }) {
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  if (extension === "json") return <FileJson size={15} className="json-file" />;
+  if (["md", "txt"].includes(extension))
+    return <FileText size={15} className="text-file" />;
+  const kind = ["html", "htm"].includes(extension)
+    ? "html-file"
+    : ["css", "scss"].includes(extension)
+      ? "css-file"
+      : "js-file";
+  return <FileCode2 size={15} className={kind} />;
 }
 
 function AgentPanel({
@@ -740,6 +801,10 @@ function AgentPanel({
   const [loadingModels, setLoadingModels] = useState(false);
   const busy = localBusy || starting;
   const runInFlight = useRef(false);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const followOutput = useRef(true);
+  const touch = useMemo(isTouchInput, []);
   const setProvider = (provider: string) =>
     setDraft((current) =>
       current.provider === provider
@@ -759,6 +824,13 @@ function AgentPanel({
   const activeModel = models.find((m) => m.id === model);
   const agentJobs = jobs.filter((j) => j.kind === "agent");
   const running = agentJobs.find((j) => j.status === "running");
+  const latestOutput = agentJobs[0]?.output.length ?? 0;
+  useEffect(() => {
+    // Keep the newest output in view unless the user scrolled up to read.
+    const element = conversationRef.current;
+    if (element && agentJobs.length && followOutput.current)
+      element.scrollTop = element.scrollHeight;
+  }, [agentJobs.length, latestOutput]);
   useEffect(() => {
     let cancelled = false;
     setModels([]);
@@ -815,6 +887,7 @@ function AgentPanel({
     )
       return;
     runInFlight.current = true;
+    followOutput.current = true;
     setBusy(true);
     onBusyChange(true);
     const submitted = prompt;
@@ -839,6 +912,8 @@ function AgentPanel({
       onBusyChange(false);
     }
   }
+  const providerReady = (id: string) =>
+    connections.some((c) => c.id === id && c.status === "connected");
   return (
     <div className="agent-panel">
       <div className="agent-heading">
@@ -847,31 +922,46 @@ function AgentPanel({
         </span>
         <div>
           <strong>Tu compañero de código</strong>
-          <span>Contexto de {project.name}</span>
+          <span>Trabaja sobre {project.name}</span>
         </div>
-        <Tag tone="green">AI</Tag>
+        <Tag tone="accent">IA</Tag>
       </div>
-      <div className="provider-switch">
+      <div className="provider-switch" role="group" aria-label="Proveedor">
         <button
           className={provider === "codex" ? "active" : ""}
+          aria-pressed={provider === "codex"}
           disabled={busy}
           onClick={() => setProvider("codex")}
         >
           <Braces size={15} />
           Codex
+          <StatusDot active={providerReady("codex")} />
         </button>
         <button
           className={provider === "claude" ? "active" : ""}
+          aria-pressed={provider === "claude"}
           disabled={busy}
           onClick={() => setProvider("claude")}
         >
           <span className="claude-symbol">✳</span>Claude
+          <StatusDot active={providerReady("claude")} />
         </button>
       </div>
-      <div className="agent-conversation">
+      <div
+        className="agent-conversation"
+        ref={conversationRef}
+        onScroll={(e) => {
+          const element = e.currentTarget;
+          followOutput.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight <
+            80;
+        }}
+      >
         {!agentJobs.length ? (
           <div className="agent-welcome">
-            <div className="agent-welcome-symbol">✧</div>
+            <div className="agent-welcome-symbol" aria-hidden="true">
+              <Sparkles size={26} />
+            </div>
             <h3>
               Una idea.
               <br />
@@ -886,9 +976,15 @@ function AgentPanel({
                 "Mejora el diseño para móvil",
                 "Revisa el código y busca errores",
               ].map((text) => (
-                <button key={text} onClick={() => setPrompt(text)}>
+                <button
+                  key={text}
+                  onClick={() => {
+                    setPrompt(text);
+                    promptRef.current?.focus();
+                  }}
+                >
                   {text}
-                  <ArrowUp size={13} />
+                  <ArrowUp size={14} />
                 </button>
               ))}
             </div>
@@ -897,27 +993,37 @@ function AgentPanel({
           [...agentJobs].reverse().map((job) => (
             <article className="agent-message" key={job.id}>
               <div className="agent-message-user">
-                <span>Tú</span>
                 <p>{job.title}</p>
               </div>
               <div className="agent-message-result">
-                <div>
-                  <Sparkles size={15} />
+                <div className="agent-message-meta">
+                  <span className="agent-avatar small">
+                    <Sparkles size={13} />
+                  </span>
                   <strong>Agente</strong>
                   <Tag
                     tone={
                       job.status === "failed"
-                        ? "red"
+                        ? "danger"
                         : job.status === "running"
-                          ? "green"
-                          : ""
+                          ? "accent"
+                          : job.status === "succeeded"
+                            ? "success"
+                            : ""
                     }
                   >
                     {statusLabel(job.status)}
                   </Tag>
+                  <time dateTime={job.createdAt}>
+                    {relativeDate(job.createdAt)}
+                  </time>
                 </div>
                 <pre>{job.output || "Preparando el entorno…"}</pre>
-                {job.status === "running" && <Spinner />}
+                {job.status === "running" && (
+                  <div className="agent-working">
+                    <Spinner /> Trabajando en tu proyecto…
+                  </div>
+                )}
               </div>
             </article>
           ))
@@ -926,7 +1032,9 @@ function AgentPanel({
       <div className="agent-compose">
         {!connected ? (
           <div className="agent-connect-notice">
-            <Unplug size={17} />
+            <span className="agent-connect-icon">
+              <Plug size={17} />
+            </span>
             <div>
               <strong>
                 Conecta {provider === "codex" ? "Codex" : "Claude"}
@@ -939,68 +1047,82 @@ function AgentPanel({
                     : "Conecta Claude Code del ordenador o añade una API key."}
               </p>
             </div>
-            <button aria-label="Configurar agente" onClick={onConnections}>
-              <ArrowRight size={18} />
+            <button className="button small primary" onClick={onConnections}>
+              Configurar agente
+              <ArrowRight size={15} />
             </button>
           </div>
         ) : (
           <div className="model-controls">
             {loadingModels ? (
-              <Spinner />
-            ) : models.length ? (
-              <select
-                aria-label="Modelo"
-                disabled={busy}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-              >
-                {model && !activeModel && (
-                  <option value={model}>{model} (personalizado)</option>
-                )}
-                {models.map((m) => (
-                  <option value={m.id} key={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
+              <span className="model-loading">
+                <Spinner /> Cargando modelos…
+              </span>
             ) : (
-              <input
-                aria-label="Identificador del modelo"
-                disabled={busy}
-                placeholder="Identificador del modelo"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-              />
+              <label className="model-field grow">
+                <span>Modelo</span>
+                {models.length ? (
+                  <select
+                    aria-label="Modelo"
+                    disabled={busy}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    {model && !activeModel && (
+                      <option value={model}>{model} (personalizado)</option>
+                    )}
+                    {models.map((m) => (
+                      <option value={m.id} key={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    aria-label="Identificador del modelo"
+                    disabled={busy}
+                    placeholder="Identificador del modelo"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                )}
+              </label>
             )}
             {!!activeModel?.efforts?.length && (
-              <select
-                aria-label="Esfuerzo"
-                disabled={busy}
-                value={effort}
-                onChange={(e) => setEffort(e.target.value)}
-              >
-                <option value="">Autom?tico</option>
-                {activeModel.efforts.map((e) => (
-                  <option key={e} value={e}>
-                    {e}
-                  </option>
-                ))}
-              </select>
+              <label className="model-field">
+                <span>Esfuerzo</span>
+                <select
+                  aria-label="Esfuerzo"
+                  disabled={busy}
+                  value={effort}
+                  onChange={(e) => setEffort(e.target.value)}
+                >
+                  <option value="">Automático</option>
+                  {activeModel.efforts.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
             {(activeModel?.speeds?.length ?? 0) > 1 && (
-              <select
-                aria-label="Velocidad"
-                disabled={busy}
-                value={speed}
-                onChange={(e) => setSpeed(e.target.value)}
-              >
-                <option value="">Autom?tica</option>
-                {activeModel!.speeds.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              <label className="model-field">
+                <span>Velocidad</span>
+                <select
+                  aria-label="Velocidad"
+                  disabled={busy}
+                  value={speed}
+                  onChange={(e) => setSpeed(e.target.value)}
+                >
+                  <option value="">Automática</option>
+                  {activeModel!.speeds.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           </div>
         )}
@@ -1009,49 +1131,57 @@ function AgentPanel({
         )}
         <div className="agent-prompt">
           <textarea
+            ref={promptRef}
             aria-label="Mensaje al agente"
             placeholder="Pídele algo a tu agente…"
             rows={3}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              // Enter sends, Shift+Enter adds a line. Touch keyboards keep
+              // Enter for new lines and send with the button.
+              if (e.ctrlKey || e.metaKey || (!e.shiftKey && !touch)) {
                 e.preventDefault();
                 void run();
               }
             }}
           />
           <div>
-            <span>
-              <FileCode2 size={12} />
+            <span className="agent-context">
+              <FileCode2 size={13} />
               Proyecto completo
             </span>
             {running ? (
               <button
                 className="send-button stop"
                 aria-label="Detener agente"
+                title="Detener agente"
                 onClick={() =>
                   void post(`/jobs/${running.id}/cancel`).catch((e) =>
                     notify(errorMessage(e), "error"),
                   )
                 }
               >
-                <Square size={15} />
+                <Square size={14} />
               </button>
             ) : (
               <button
                 className="send-button"
                 aria-label="Enviar al agente"
+                title="Enviar al agente"
                 disabled={!connected || !prompt.trim() || busy || loadingModels}
                 onClick={() => void run()}
               >
-                {busy ? <Spinner /> : <ArrowUp size={18} />}
+                {busy ? <Spinner /> : <ArrowUp size={18} strokeWidth={2.4} />}
               </button>
             )}
           </div>
         </div>
         <p className="agent-footnote">
-          Revisa los cambios en Código y Cambios.
+          {touch
+            ? "Revisa los cambios en Código y Cambios."
+            : "Enter para enviar · Mayús + Enter para una nueva línea"}
         </p>
       </div>
     </div>
@@ -1117,13 +1247,16 @@ function Preview({
     window.addEventListener("message", message);
     return () => window.removeEventListener("message", message);
   }, []);
+  const errors = logs.filter((log) => log.level === "error").length;
   return (
     <div className="preview-panel">
       <div className="preview-toolbar">
-        <div className="device-switch">
+        <div className="device-switch" role="group" aria-label="Dispositivo">
           <button
             className={device === "mobile" ? "active" : ""}
             aria-label="Vista móvil"
+            aria-pressed={device === "mobile"}
+            title="Vista móvil"
             onClick={() => setDevice("mobile")}
           >
             <Smartphone size={16} />
@@ -1131,6 +1264,8 @@ function Preview({
           <button
             className={device === "desktop" ? "active" : ""}
             aria-label="Vista escritorio"
+            aria-pressed={device === "desktop"}
+            title="Vista escritorio"
             onClick={() => setDevice("desktop")}
           >
             <Monitor size={16} />
@@ -1143,6 +1278,7 @@ function Preview({
         <button
           className="icon-button"
           aria-label="Actualizar vista previa"
+          title="Actualizar vista previa"
           disabled={busy}
           onClick={() => void load()}
         >
@@ -1151,7 +1287,7 @@ function Preview({
       </div>
       {dirty && (
         <div className="preview-unsaved">
-          <CircleAlert size={15} />
+          <CircleAlert size={16} />
           <span>Guarda tus cambios para verlos aquí.</span>
           <button onClick={() => void onSave()}>Guardar ahora</button>
         </div>
@@ -1162,7 +1298,7 @@ function Preview({
             icon={<CircleAlert size={28} />}
             title="No se pudo ejecutar la vista previa"
             action={
-              <button className="button light" onClick={() => void load()}>
+              <button className="button secondary" onClick={() => void load()}>
                 Volver a intentar
               </button>
             }
@@ -1201,10 +1337,19 @@ function Preview({
       </div>
       <div className="preview-console">
         <div>
-          <TerminalIcon size={13} />
+          <TerminalIcon size={14} />
           <strong>Consola</strong>
-          <span>{logs.length} mensajes</span>
-          <button onClick={() => setLogs([])}>Limpiar</button>
+          <span>
+            {logs.length} {logs.length === 1 ? "mensaje" : "mensajes"}
+          </span>
+          {errors > 0 && (
+            <Tag tone="danger">
+              {errors} {errors === 1 ? "error" : "errores"}
+            </Tag>
+          )}
+          <button onClick={() => setLogs([])} disabled={!logs.length}>
+            Limpiar
+          </button>
         </div>
         <section>
           {logs.length ? (
@@ -1219,7 +1364,7 @@ function Preview({
         </section>
       </div>
       <div className="preview-note">
-        <Monitor size={13} />
+        <Monitor size={14} />
         Vista previa web · Las funciones nativas requieren una build de
         dispositivo.
       </div>
@@ -1244,6 +1389,7 @@ function TerminalPanel({
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const end = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const current = jobs.find((j) => j.id === selected) ?? jobs[0];
   useEffect(() => {
     end.current?.scrollIntoView({ block: "nearest" });
@@ -1274,12 +1420,20 @@ function TerminalPanel({
           <strong>Terminal del proyecto</strong>
           <Tag>Servidor</Tag>
         </div>
-        <span>Los comandos continúan al cambiar de pestaña.</span>
+        <span>Los comandos siguen en marcha al cambiar de pestaña.</span>
       </div>
       <div className="command-presets">
+        <span>Comandos útiles</span>
         {["git status", "node --version", "npm install", "npm run build"].map(
           (cmd) => (
-            <button key={cmd} onClick={() => setCommand(cmd)}>
+            <button
+              key={cmd}
+              title="Escribir en la terminal"
+              onClick={() => {
+                setCommand(cmd);
+                input.current?.focus();
+              }}
+            >
               <ChevronRight size={13} />
               {cmd}
             </button>
@@ -1288,11 +1442,11 @@ function TerminalPanel({
       </div>
       <div className="terminal-body">
         <aside className="terminal-sessions">
-          <div>COMANDOS</div>
+          <div>Historial</div>
           {jobs.map((job) => (
             <button
               key={job.id}
-              className={current?.id === job.id ? "active" : ""}
+              className={`${current?.id === job.id ? "active" : ""} ${job.status}`}
               onClick={() => setSelected(job.id)}
             >
               {job.status === "running" ? (
@@ -1316,6 +1470,11 @@ function TerminalPanel({
               <div ref={end} />
               {current.status !== "running" && (
                 <div className={`terminal-result ${current.status}`}>
+                  {current.status === "succeeded" ? (
+                    <Check size={14} />
+                  ) : (
+                    <CircleAlert size={14} />
+                  )}
                   {statusLabel(current.status)}
                   {current.exitCode !== undefined &&
                     ` · código ${current.exitCode}`}
@@ -1324,7 +1483,9 @@ function TerminalPanel({
             </>
           ) : (
             <div className="terminal-intro">
-              <TerminalIcon size={28} />
+              <span className="terminal-intro-icon">
+                <TerminalIcon size={26} />
+              </span>
               <h3>Tu proyecto. Tu terminal.</h3>
               <p>
                 Ejecuta comandos reales en el servidor.
@@ -1348,8 +1509,9 @@ function TerminalPanel({
       >
         <span>❯</span>
         <input
+          ref={input}
           aria-label="Comando de terminal"
-          placeholder="Escribe un comando…"
+          placeholder="Escribe un comando y pulsa Enter…"
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           autoCapitalize="off"
@@ -1373,6 +1535,8 @@ function TerminalPanel({
         <button
           type="submit"
           className="terminal-run"
+          aria-label="Ejecutar comando"
+          title="Ejecutar comando"
           disabled={!command.trim() || busy}
         >
           {busy ? <Spinner /> : <ArrowRight size={18} />}
@@ -1382,6 +1546,7 @@ function TerminalPanel({
             type="button"
             className="terminal-stop"
             aria-label="Cancelar comando"
+            title="Cancelar comando"
             onClick={() =>
               void post(`/jobs/${current.id}/cancel`).catch((e) =>
                 notify(errorMessage(e), "error"),
@@ -1407,6 +1572,7 @@ function GitPanel({
   project,
   revision,
   notify,
+  onStatus,
   onRestored,
   canRestore,
   beforeCommit,
@@ -1414,6 +1580,7 @@ function GitPanel({
   project: Project;
   revision: number;
   notify: ToastFn;
+  onStatus: (state: GitState) => void;
   onRestored: () => void;
   canRestore: boolean;
   beforeCommit: () => Promise<boolean>;
@@ -1425,11 +1592,13 @@ function GitPanel({
   const [selected, setSelected] = useState("");
   const refresh = useCallback(async () => {
     try {
-      setGit(await api<GitState>(`/projects/${project.id}/git`));
+      const state = await api<GitState>(`/projects/${project.id}/git`);
+      setGit(state);
+      onStatus(state);
     } catch (e) {
       notify(errorMessage(e), "error");
     }
-  }, [project.id, notify]);
+  }, [project.id, notify, onStatus]);
   useEffect(() => {
     void refresh();
   }, [refresh, revision]);
@@ -1481,14 +1650,15 @@ function GitPanel({
       <div className="git-sidebar">
         <div className="panel-heading">
           <span>
-            <GitBranch size={15} /> CONTROL DE VERSIONES
+            <GitBranch size={15} /> Control de versiones
           </span>
           <button
             className="icon-button"
             aria-label="Actualizar cambios"
+            title="Actualizar cambios"
             onClick={() => void refresh()}
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={15} />
           </button>
         </div>
         <form className="git-commit-form" onSubmit={commit}>
@@ -1501,40 +1671,48 @@ function GitPanel({
             onChange={(e) => setMessage(e.target.value)}
           />
           <button
-            className="button dark"
+            className="button primary"
             disabled={busy || !message.trim() || !git?.changes.length}
           >
-            {busy ? <Spinner /> : <Check size={15} />}Guardar commit
+            {busy ? <Spinner /> : <Check size={16} />}Guardar commit
           </button>
+          <small>
+            Un commit guarda una versión de tu proyecto a la que podrás volver.
+          </small>
         </form>
         <div className="git-group-title">
-          CAMBIOS <span>{git?.changes.length ?? 0}</span>
+          Cambios <span>{git?.changes.length ?? 0}</span>
         </div>
         <div className="git-files">
           {git?.changes.length ? (
-            git.changes.map((c) => (
-              <button
-                key={c.path}
-                onClick={() => void inspect(c.path)}
-                className={selected === c.path ? "active" : ""}
-              >
-                <FileCode2 size={15} />
-                <span>{c.path}</span>
-                <Tag tone="green">{c.status}</Tag>
-              </button>
-            ))
+            git.changes.map((c) => {
+              const change = describeChange(c.status);
+              return (
+                <button
+                  key={c.path}
+                  onClick={() => void inspect(c.path)}
+                  className={selected === c.path ? "active" : ""}
+                >
+                  <FileIcon name={c.path} />
+                  <span>{c.path}</span>
+                  <Tag tone={change.tone}>{change.label}</Tag>
+                </button>
+              );
+            })
           ) : (
             <div className="git-clean">
-              <Check size={18} />
+              <span>
+                <Check size={18} />
+              </span>
               <p>
                 Todo al día.
                 <br />
-                <span>No hay cambios pendientes.</span>
+                <small>No hay cambios pendientes.</small>
               </p>
             </div>
           )}
         </div>
-        <div className="git-group-title">HISTORIAL</div>
+        <div className="git-group-title git-history-title">Historial</div>
         <div className="git-history">
           {git?.log.map((item) => (
             <div key={item.hash}>
@@ -1553,14 +1731,14 @@ function GitPanel({
         {selected ? (
           <>
             <div className="panel-heading">
-              <span>{selected}</span>
+              <span className="git-diff-path">{selected}</span>
               <button
-                className="button small light"
+                className="button small secondary"
                 disabled={!canRestore || busy}
                 title={
                   !canRestore
                     ? "Guarda tus cambios y espera a que termine el agente."
-                    : undefined
+                    : "Descarta los cambios de este archivo"
                 }
                 onClick={async () => {
                   if (!canRestore || busy) return;
@@ -1582,7 +1760,7 @@ function GitPanel({
                   }
                 }}
               >
-                <RotateCcw size={13} />
+                <RotateCcw size={14} />
                 Restaurar archivo
               </button>
             </div>
@@ -1657,12 +1835,23 @@ function NewFile({
           />
         </label>
         {error && <div className="inline-error">{error}</div>}
-        <button className="button dark" disabled={busy}>
-          {busy ? <Spinner /> : <FilePlus2 size={16} />}Crear archivo
+        <button className="button primary" disabled={busy}>
+          {busy ? <Spinner /> : <FilePlus2 size={17} />}Crear archivo
         </button>
       </form>
     </Modal>
   );
+}
+/** Translates `git status --porcelain` codes into words a person can scan. */
+function describeChange(status: string): { label: string; tone: Tone } {
+  if (status.includes("U") || status === "AA" || status === "DD")
+    return { label: "Conflicto", tone: "danger" };
+  if (status === "??") return { label: "Nuevo", tone: "success" };
+  if (status.includes("D")) return { label: "Eliminado", tone: "danger" };
+  if (status.includes("R")) return { label: "Renombrado", tone: "info" };
+  if (status.includes("A")) return { label: "Añadido", tone: "success" };
+  if (status.includes("C")) return { label: "Copiado", tone: "info" };
+  return { label: "Modificado", tone: "warning" };
 }
 function statusLabel(status: string) {
   return (

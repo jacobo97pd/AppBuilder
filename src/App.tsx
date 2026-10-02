@@ -7,38 +7,33 @@ import {
   useState,
 } from "react";
 import {
-  ArrowDown,
   ArrowRight,
-  ArrowUpRight,
-  Bell,
-  Boxes,
   Check,
-  ChevronDown,
   ChevronRight,
+  CircleAlert,
+  CircleCheck,
   CircleHelp,
-  Command,
-  Cpu,
+  Clock3,
   Folder,
-  GitBranch,
   Layers3,
+  LayoutDashboard,
   LayoutGrid,
+  ListChecks,
   Menu,
   MonitorSmartphone,
+  Plug,
   Plus,
   Search,
-  Settings2,
   ShieldCheck,
   Sparkles,
   Terminal,
-  Unplug,
-  Workflow,
   X,
-  Zap,
 } from "lucide-react";
+import { APP_VERSION } from "../version";
 import { api, errorMessage, isNative, post, serverUrl, setServer } from "./api";
 import type { Connection, Project, ToastFn } from "./types";
 import {
-  Empty,
+  isTouchInput,
   Logo,
   Modal,
   ProjectIcon,
@@ -46,6 +41,7 @@ import {
   Spinner,
   StatusDot,
   Tag,
+  useMediaQuery,
 } from "./ui";
 const Workspace = lazy(() =>
   import("./Workspace").then((module) => ({ default: module.Workspace })),
@@ -58,8 +54,32 @@ const pages = [
   { id: "studio", label: "Mi estudio", icon: LayoutGrid },
   { id: "projects", label: "Proyectos", icon: Folder },
   { id: "builds", label: "Builds", icon: Layers3 },
-  { id: "connections", label: "Conexiones", icon: Unplug },
+  { id: "connections", label: "Conexiones", icon: Plug },
 ] as const;
+const starters = [
+  {
+    label: "App de tareas",
+    name: "Mis tareas",
+    icon: ListChecks,
+    prompt:
+      "Crear una app para organizar mis tareas con listas, etiquetas y prioridades.",
+  },
+  {
+    label: "Portfolio",
+    name: "Mi portfolio",
+    icon: MonitorSmartphone,
+    prompt:
+      "Crear un portfolio personal con proyectos, presentación y contacto.",
+  },
+  {
+    label: "Dashboard",
+    name: "Panel de métricas",
+    icon: LayoutDashboard,
+    prompt: "Crear un panel de métricas con gráficos y filtros.",
+  },
+];
+const RECENT_PROJECTS = 5;
+const agentNames: Record<string, string> = { codex: "Codex", claude: "Claude" };
 
 export function App() {
   const [session, setSession] = useState<
@@ -69,7 +89,10 @@ export function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [newProject, setNewProject] = useState(false);
+  const [newProject, setNewProject] = useState<{
+    prompt: string;
+    name: string;
+  } | null>(null);
   const [menu, setMenu] = useState(false);
   const [search, setSearch] = useState(false);
   const [help, setHelp] = useState(false);
@@ -83,6 +106,10 @@ export function App() {
     (() => void) | null
   >(null);
   const [leaving, setLeaving] = useState(false);
+  // The sidebar shrinks to icons on tablets, and on laptops while a project
+  // is open so the editor gets the extra width.
+  const tablet = useMediaQuery("(min-width: 701px) and (max-width: 1099px)");
+  const laptop = useMediaQuery("(min-width: 1100px) and (max-width: 1439px)");
   const registerGuard = useCallback((save: (() => Promise<boolean>) | null) => {
     navigationGuard.current = save;
   }, []);
@@ -131,6 +158,7 @@ export function App() {
         e.preventDefault();
         setSearch((value) => !value);
       }
+      if (e.key === "Escape") setMenu(false);
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -147,22 +175,27 @@ export function App() {
       void refresh().catch((e) => notify(errorMessage(e), "error"));
     });
   }
-  function openProject(next: Project) {
+  function openProject(next: Project, prompt = "") {
     if (next.id === project?.id) {
       setMenu(false);
       setSearch(false);
       return;
     }
     guardedNavigate(() => {
+      setInitialPrompt(prompt);
       setProject(next);
       setMenu(false);
       setSearch(false);
     });
   }
-  async function created(next: Project) {
-    setNewProject(false);
+  function startProject(prompt = "", name = "") {
+    setMenu(false);
+    setNewProject({ prompt, name });
+  }
+  async function created(next: Project, prompt: string) {
+    setNewProject(null);
     await refresh();
-    openProject(next);
+    openProject(next, prompt);
     notify("Proyecto creado. Tu espacio está listo.");
   }
   if (session === "loading")
@@ -176,8 +209,14 @@ export function App() {
   if (session !== "ready")
     return <ConnectScreen offline={session === "offline"} retry={connect} />;
 
+  const readyConnections = connections.filter(
+    (c) => c.status === "connected",
+  ).length;
+  const rail = tablet || (laptop && project !== null);
   return (
-    <div className={`app-shell ${project ? "has-workspace" : ""}`}>
+    <div
+      className={`app-shell ${project ? "has-workspace" : ""} ${rail ? "rail" : ""}`}
+    >
       {menu && (
         <button
           className="sidebar-scrim"
@@ -186,88 +225,98 @@ export function App() {
         />
       )}
       <aside className={`sidebar ${menu ? "is-open" : ""}`}>
-        <button className="brand" onClick={() => navigate("studio")}>
+        <button
+          className="brand"
+          onClick={() => navigate("studio")}
+          title="Mi estudio"
+        >
           <Logo />
-          <span>
+          <span className="brand-name">
             appbuilder<span className="brand-period">.</span>
           </span>
         </button>
-        <button className="space-switcher" onClick={() => setHelp(true)}>
-          <span className="space-avatar">J</span>
-          <span>
-            <strong>Mi espacio</strong>
-            <small>Personal</small>
-          </span>
-          <ChevronDown size={15} />
+        <button
+          className="sidebar-create"
+          onClick={() => startProject()}
+          title="Nuevo proyecto"
+        >
+          <Plus size={18} strokeWidth={2.2} />
+          <span>Nuevo proyecto</span>
         </button>
-        <div className="nav-caption">WORKSPACE</div>
-        <nav>
-          {pages.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${page === item.id && !project ? "active" : ""}`}
-              onClick={() => navigate(item.id)}
-            >
-              <item.icon size={18} />
-              <span>{item.label}</span>
-              {item.id === "projects" && (
-                <span className="nav-count">{projects.length}</span>
-              )}
-              {item.id === "connections" &&
-                connections.some((c) => c.status === "connected") && (
+        <nav className="sidebar-nav" aria-label="Principal">
+          {pages.map((item) => {
+            const active = page === item.id && !project;
+            return (
+              <button
+                key={item.id}
+                className={`nav-item ${active ? "active" : ""}`}
+                aria-current={active ? "page" : undefined}
+                title={item.label}
+                onClick={() => navigate(item.id)}
+              >
+                <item.icon size={19} />
+                <span className="nav-label">{item.label}</span>
+                {item.id === "projects" && (
+                  <span className="nav-count">{projects.length}</span>
+                )}
+                {item.id === "connections" && readyConnections > 0 && (
                   <StatusDot active />
                 )}
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </nav>
-        <div className="sidebar-project-heading">
-          <span className="nav-caption">TUS PROYECTOS</span>
-          <button
-            aria-label="Crear proyecto"
-            onClick={() => {
-              setInitialPrompt("");
-              setNewProject(true);
-            }}
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-        <div className="sidebar-projects">
-          {projects.slice(0, 5).map((p) => (
-            <button
-              key={p.id}
-              className={p.id === project?.id ? "selected" : ""}
-              onClick={() => openProject(p)}
-            >
-              <span className={`mini-project-dot ${p.template}`} />
-              {p.name}
-            </button>
-          ))}
+        <div className="sidebar-section">
+          <div className="sidebar-section-heading">
+            <span className="nav-caption">Recientes</span>
+            {projects.length > RECENT_PROJECTS && (
+              <button onClick={() => navigate("projects")}>Ver todos</button>
+            )}
+          </div>
+          <div className="sidebar-projects">
+            {projects.slice(0, RECENT_PROJECTS).map((p) => (
+              <button
+                key={p.id}
+                className={p.id === project?.id ? "selected" : ""}
+                title={p.name}
+                onClick={() => openProject(p)}
+              >
+                <span className={`mini-project-dot ${p.template}`} />
+                <span>{p.name}</span>
+              </button>
+            ))}
+            {!projects.length && (
+              <p className="sidebar-empty">Aún no tienes proyectos.</p>
+            )}
+          </div>
         </div>
         <div className="sidebar-bottom">
-          <div className="environment-card">
-            <div>
-              <span className="pulse-dot" />
-              Entorno conectado
-            </div>
-            <p>Todo preparado para crear.</p>
-            <span>
-              Servidor personal <ArrowUpRight size={12} />
+          <button
+            className="sidebar-status"
+            title="Conexiones"
+            onClick={() => navigate("connections")}
+          >
+            <span className="pulse-dot" />
+            <span className="sidebar-status-text">
+              <strong>Servidor conectado</strong>
+              <small>
+                {readyConnections} de {connections.length} conexiones listas
+              </small>
             </span>
-          </div>
-          <button className="sidebar-help" onClick={() => setHelp(true)}>
-            <CircleHelp size={17} />
-            Guía de inicio
-            <ArrowUpRight size={14} />
+            <ChevronRight size={16} />
           </button>
-          <div className="profile">
-            <span className="profile-avatar">J</span>
-            <div>
-              <strong>Tu estudio personal</strong>
-              <small>AppBuilder · v0.1.2</small>
-            </div>
-            <ShieldCheck size={17} />
-          </div>
+          <button
+            className="sidebar-help"
+            title="Guía de inicio"
+            onClick={() => {
+              setMenu(false);
+              setHelp(true);
+            }}
+          >
+            <CircleHelp size={18} />
+            <span>Guía de inicio</span>
+          </button>
+          <div className="sidebar-version">AppBuilder v{APP_VERSION}</div>
         </div>
       </aside>
       <div className="app-body">
@@ -278,34 +327,44 @@ export function App() {
               aria-label="Abrir menú"
               onClick={() => setMenu(true)}
             >
-              <Menu size={21} />
+              <Menu size={22} />
             </button>
-            <span className="breadcrumb-root">Workspace</span>
-            <ChevronRight size={14} />
-            <strong>
-              {project?.name ?? pages.find((p) => p.id === page)?.label}
-            </strong>
-            {project && (
-              <Tag tone="green">
-                {project.template === "react" ? "React" : "Web"}
-              </Tag>
+            {project ? (
+              <>
+                <button
+                  className="breadcrumb-root"
+                  onClick={() => navigate("projects")}
+                >
+                  Proyectos
+                </button>
+                <ChevronRight size={15} className="breadcrumb-separator" />
+                <strong>{project.name}</strong>
+                <Tag tone={project.template === "react" ? "info" : "accent"}>
+                  {project.template === "react" ? "React" : "Web"}
+                </Tag>
+              </>
+            ) : (
+              <strong>{pages.find((p) => p.id === page)?.label}</strong>
             )}
           </div>
           <div className="topbar-actions">
-            <button className="search-trigger" onClick={() => setSearch(true)}>
-              <Search size={16} />
-              <span>Buscar proyecto</span>
+            <button
+              className="search-trigger"
+              aria-label="Buscar proyecto"
+              onClick={() => setSearch(true)}
+            >
+              <Search size={17} />
+              <span>Buscar proyecto…</span>
               <kbd>Ctrl K</kbd>
             </button>
-            <span className="topbar-separator" />
             <button
-              className="icon-button"
-              aria-label="Actividad y ayuda"
+              className="icon-button topbar-help"
+              aria-label="Ayuda"
+              title="Guía de inicio"
               onClick={() => setHelp(true)}
             >
-              <Bell size={18} />
+              <CircleHelp size={20} />
             </button>
-            <span className="topbar-avatar">J</span>
           </div>
         </header>
         {project ? (
@@ -349,13 +408,11 @@ export function App() {
             projects={projects}
             connections={connections}
             allProjects={page === "projects"}
-            onOpen={openProject}
-            onNew={(prompt = "") => {
-              setInitialPrompt(prompt);
-              setNewProject(true);
-            }}
+            onOpen={(p) => openProject(p)}
+            onNew={startProject}
             onConnections={() => navigate("connections")}
             onBuilds={() => navigate("builds")}
+            onProjects={() => navigate("projects")}
           />
         )}
         {!project && (
@@ -370,14 +427,15 @@ export function App() {
         )}
       </div>
       {!project && (
-        <nav className="mobile-nav">
+        <nav className="mobile-nav" aria-label="Principal">
           {pages.map((item) => (
             <button
               key={item.id}
               className={page === item.id ? "active" : ""}
+              aria-current={page === item.id ? "page" : undefined}
               onClick={() => navigate(item.id)}
             >
-              <item.icon size={20} />
+              <item.icon size={21} />
               <span>{item.label}</span>
             </button>
           ))}
@@ -385,16 +443,19 @@ export function App() {
       )}
       {newProject && (
         <NewProjectModal
-          initialPrompt={initialPrompt}
-          onClose={() => setNewProject(false)}
-          onCreated={created}
+          initialPrompt={newProject.prompt}
+          initialName={newProject.name}
+          onClose={() => setNewProject(null)}
+          onCreated={(next, description) =>
+            created(next, newProject.prompt ? description.trim() : "")
+          }
         />
       )}
       {search && (
         <SearchModal
           projects={projects}
           onClose={() => setSearch(false)}
-          onOpen={openProject}
+          onOpen={(p) => openProject(p)}
         />
       )}
       {pendingNavigation && (
@@ -405,7 +466,7 @@ export function App() {
         >
           <div className="form-footer">
             <button
-              className="button light"
+              className="button secondary"
               disabled={leaving}
               onClick={() => {
                 navigationGuard.current = null;
@@ -416,7 +477,7 @@ export function App() {
               Salir sin guardar
             </button>
             <button
-              className="button dark"
+              className="button primary"
               disabled={leaving}
               onClick={async () => {
                 setLeaving(true);
@@ -434,7 +495,7 @@ export function App() {
                 }
               }}
             >
-              {leaving ? <Spinner /> : <Check size={15} />}Guardar y continuar
+              {leaving ? <Spinner /> : <Check size={16} />}Guardar y continuar
             </button>
           </div>
         </Modal>
@@ -442,41 +503,84 @@ export function App() {
       {help && (
         <Modal
           title="Un estudio que va contigo"
-          subtitle="De la primera línea a tu próxima build."
+          subtitle="De la primera línea a tu próxima build, en cuatro pasos."
           onClose={() => setHelp(false)}
         >
-          <div className="guide-steps">
+          <ol className="guide-steps">
             {[
               {
                 icon: Folder,
                 title: "Empieza con un proyecto",
-                text: "Abre Orbit Notes o crea una app Web o React. Tus archivos se guardan en el servidor.",
+                text: "Abre Orbit Notes o crea una app Web o React. Tus archivos se guardan en tu servidor.",
+                action: "Crear proyecto",
+                run: () => startProject(),
               },
               {
                 icon: Sparkles,
-                title: "Conecta a tu compañero de código",
-                text: "Añade tu clave API de Codex o Claude en Conexiones. El agente trabajará sobre los archivos del proyecto.",
+                title: "Conecta tu agente de IA",
+                text: "Usa tu cuenta ChatGPT con Codex o Claude Code iniciado en este ordenador. También puedes añadir una API key.",
+                action: "Ir a Conexiones",
+                run: () => navigate("connections"),
               },
               {
                 icon: Terminal,
-                title: "Edita, ejecuta y comprueba",
-                text: "Guarda el código, usa la terminal y abre la vista previa web. Git te permite registrar cada avance.",
+                title: "Edita, prueba y guarda",
+                text: "Edita el código, mira la vista previa y usa la terminal. En Cambios guardas cada avance con Git.",
               },
               {
                 icon: Layers3,
-                title: "Lleva tu app al siguiente paso",
-                text: "Conecta Codemagic para iniciar builds de repositorios ya configurados. Apple y Google permiten consultar tus apps y canales.",
+                title: "Compila tu app",
+                text: "Conecta Codemagic para lanzar builds de tu repositorio. Con Apple y Google consultas tus apps y canales.",
+                action: "Ver builds",
+                run: () => navigate("builds"),
               },
             ].map((s, i) => (
-              <div key={s.title}>
-                <span>{i + 1}</span>
+              <li key={s.title}>
+                <span className="guide-number">{i + 1}</span>
                 <div>
-                  <h3>{s.title}</h3>
+                  <h3>
+                    <s.icon size={17} />
+                    {s.title}
+                  </h3>
                   <p>{s.text}</p>
+                  {s.action && (
+                    <button
+                      className="button ghost small"
+                      onClick={() => {
+                        setHelp(false);
+                        s.run();
+                      }}
+                    >
+                      {s.action}
+                      <ArrowRight size={14} />
+                    </button>
+                  )}
                 </div>
-                <s.icon size={19} />
-              </div>
+              </li>
             ))}
+          </ol>
+          <div className="shortcuts">
+            <h3>Atajos de teclado</h3>
+            <dl>
+              <div>
+                <dt>
+                  <kbd>Ctrl</kbd> <kbd>K</kbd>
+                </dt>
+                <dd>Buscar un proyecto</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>Ctrl</kbd> <kbd>S</kbd>
+                </dt>
+                <dd>Guardar el archivo</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>Enter</kbd>
+                </dt>
+                <dd>Enviar un mensaje al agente</dd>
+              </div>
+            </dl>
           </div>
           <div className="notice">
             <ShieldCheck size={18} />
@@ -491,9 +595,9 @@ export function App() {
       {toast && (
         <div role="status" className={`toast ${toast.kind}`}>
           {toast.kind === "success" ? (
-            <Check size={18} />
+            <CircleCheck size={19} />
           ) : (
-            <CircleHelp size={18} />
+            <CircleAlert size={19} />
           )}
           <span>{toast.message}</span>
           <button aria-label="Cerrar aviso" onClick={() => setToast(null)}>
@@ -513,163 +617,198 @@ function Dashboard({
   onNew,
   onConnections,
   onBuilds,
+  onProjects,
 }: {
   projects: Project[];
   connections: Connection[];
   allProjects: boolean;
   onOpen: (project: Project) => void;
-  onNew: (prompt?: string) => void;
+  onNew: (prompt?: string, name?: string) => void;
   onConnections: () => void;
   onBuilds: () => void;
+  onProjects: () => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [query, setQuery] = useState("");
-  const connected = connections.filter((c) => c.status === "connected").length;
   const filtered = projects.filter((p) =>
     p.name.toLowerCase().includes(query.toLowerCase()),
   );
+  const visible = allProjects ? filtered : projects;
+  const agents = connections
+    .filter((c) => c.id in agentNames && c.status === "connected")
+    .map((c) => agentNames[c.id]);
+  const buildsReady = connections.some(
+    (c) => c.id === "codemagic" && c.status === "connected",
+  );
+  const steps = [
+    {
+      done: projects.length > 0,
+      icon: Folder,
+      tone: "violet",
+      title: "Crea un proyecto",
+      text: projects.length
+        ? `${projects.length} ${projects.length === 1 ? "proyecto" : "proyectos"} en tu espacio`
+        : "Empieza con una idea o una plantilla.",
+      action: projects.length ? "Ver proyectos" : "Crear proyecto",
+      run: projects.length ? onProjects : () => onNew(),
+    },
+    {
+      done: agents.length > 0,
+      icon: Sparkles,
+      tone: "pink",
+      title: "Conecta tu agente de IA",
+      text: agents.length
+        ? `${agents.join(" y ")} listo para trabajar contigo`
+        : "Codex o Claude, con tu cuenta o una API key.",
+      action: agents.length ? "Gestionar" : "Conectar agente",
+      run: onConnections,
+    },
+    {
+      done: buildsReady,
+      icon: Layers3,
+      tone: "sky",
+      title: "Prepara tus builds",
+      text: buildsReady
+        ? "Codemagic configurado para compilar"
+        : "Conecta Codemagic para compilar tu app.",
+      action: buildsReady ? "Ver builds" : "Configurar builds",
+      run: buildsReady ? onBuilds : onConnections,
+    },
+  ];
+  const completed = steps.filter((s) => s.done).length;
   return (
     <main className="dashboard">
       {!allProjects ? (
         <>
-          <div className="welcome-eyebrow">
-            <span /> TU ESTUDIO DE DESARROLLO <span className="eyebrow-line" />
-          </div>
-          <div className="welcome-heading">
-            <div>
-              <h1>
-                Las grandes ideas
-                <br />
-                empiezan <span>aquí.</span>
-                <span className="heading-spark">✳</span>
-              </h1>
-              <p>Tu código, tus agentes y tu próxima app. En un mismo lugar.</p>
+          <section className="hero">
+            <div className="eyebrow">
+              <span className="eyebrow-dot" /> Tu estudio de desarrollo
             </div>
-            <div className="welcome-stamp">
-              <div className="stamp-top">
-                <span />
-                <span />
-                <span />
-              </div>
-              <div>
-                <Code2Art />
-              </div>
-              <small>MAKE SOMETHING GREAT</small>
-            </div>
-          </div>
-          <form
-            className="idea-composer"
-            onSubmit={(e) => {
-              e.preventDefault();
-              onNew(prompt);
-            }}
-          >
-            <div className="idea-input">
-              <Sparkles size={22} />
-              <textarea
-                rows={2}
-                aria-label="Describe tu próxima app"
-                placeholder="¿Qué vamos a construir hoy?"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-              />
-            </div>
-            <div className="idea-composer-bottom">
-              <span>
-                <span className="tiny-spark">✧</span> De una idea a tu primer
-                proyecto
+            <h1>
+              Las grandes ideas
+              <br />
+              empiezan <span className="gradient-text">aquí.</span>
+              <span className="heading-spark" aria-hidden="true">
+                ✳
               </span>
-              <button className="button dark" type="submit">
-                Empezar a crear <ArrowRight size={16} />
-              </button>
-            </div>
-          </form>
-          <div className="starter-chips">
-            <span>Un punto de partida</span>
-            <button
-              onClick={() =>
-                onNew(
-                  "Crear una app para organizar mis tareas con listas, etiquetas y prioridades.",
-                )
-              }
+            </h1>
+            <p>Tu código, tus agentes y tu próxima app. En un mismo lugar.</p>
+            <form
+              className="idea-composer"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onNew(prompt.trim());
+              }}
             >
-              <Check size={13} /> App de tareas
-            </button>
-            <button
-              onClick={() =>
-                onNew(
-                  "Crear un portfolio personal con proyectos, presentación y contacto.",
-                )
-              }
-            >
-              <MonitorSmartphone size={13} /> Portfolio
-            </button>
-            <button
-              onClick={() =>
-                onNew("Crear un panel de métricas con gráficos y filtros.")
-              }
-            >
-              <Workflow size={13} /> Dashboard
-            </button>
-          </div>
-          <div className="overview-grid">
-            <div className="overview-card">
-              <span className="metric-icon mint">
-                <Folder size={18} />
-              </span>
-              <div>
-                <span>Proyectos</span>
-                <strong>
-                  {projects.length.toString().padStart(2, "0")}
-                  <small>en tu espacio</small>
-                </strong>
+              <label className="idea-input">
+                <Sparkles size={22} />
+                <textarea
+                  rows={2}
+                  aria-label="Describe tu próxima app"
+                  placeholder="¿Qué vamos a construir hoy? Describe tu idea…"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                    if (
+                      e.ctrlKey ||
+                      e.metaKey ||
+                      (!e.shiftKey && !isTouchInput())
+                    ) {
+                      e.preventDefault();
+                      onNew(prompt.trim());
+                    }
+                  }}
+                />
+              </label>
+              <div className="idea-composer-bottom">
+                <div className="starter-chips">
+                  <span>Ideas rápidas</span>
+                  {starters.map((s) => (
+                    <button
+                      type="button"
+                      key={s.label}
+                      onClick={() => onNew(s.prompt, s.name)}
+                    >
+                      <s.icon size={14} />
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="button primary" type="submit">
+                  Empezar a crear <ArrowRight size={17} />
+                </button>
               </div>
-              <ArrowUpRight size={17} />
+            </form>
+          </section>
+          <section className="setup" aria-labelledby="setup-title">
+            <div className="section-heading">
+              <div>
+                <h2 id="setup-title">Tu estudio, paso a paso</h2>
+                <p>
+                  {completed === steps.length
+                    ? "Todo listo. ¡A construir!"
+                    : `${completed} de ${steps.length} pasos completados`}
+                </p>
+              </div>
+              <div
+                className="setup-progress"
+                role="progressbar"
+                aria-label="Pasos completados"
+                aria-valuemin={0}
+                aria-valuemax={steps.length}
+                aria-valuenow={completed}
+              >
+                <span
+                  style={{ width: `${(completed / steps.length) * 100}%` }}
+                />
+              </div>
             </div>
-            <button className="overview-card" onClick={onConnections}>
-              <span className="metric-icon lilac">
-                <Cpu size={18} />
-              </span>
-              <div>
-                <span>Conexiones</span>
-                <strong>
-                  {connected.toString().padStart(2, "0")}
-                  <small>
-                    {connected
-                      ? "listas para trabajar"
-                      : "conecta tus herramientas"}
-                  </small>
-                </strong>
-              </div>
-              <ArrowUpRight size={17} />
-            </button>
-            <button className="overview-card" onClick={onBuilds}>
-              <span className="metric-icon peach">
-                <Layers3 size={18} />
-              </span>
-              <div>
-                <span>Tu siguiente build</span>
-                <strong className="metric-text">
-                  Todo empieza aquí<small>Prepara tu lanzamiento</small>
-                </strong>
-              </div>
-              <ArrowUpRight size={17} />
-            </button>
-          </div>
+            <div className="setup-grid">
+              {steps.map((step) => (
+                <article
+                  key={step.title}
+                  className={`setup-card ${step.done ? "done" : ""}`}
+                >
+                  <div className="setup-card-top">
+                    <span className={`metric-icon ${step.tone}`}>
+                      <step.icon size={19} />
+                    </span>
+                    {step.done ? (
+                      <Tag tone="success">
+                        <Check size={13} /> Listo
+                      </Tag>
+                    ) : (
+                      <Tag>Pendiente</Tag>
+                    )}
+                  </div>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                  <button
+                    className={`button small ${step.done ? "ghost" : "secondary"}`}
+                    onClick={step.run}
+                  >
+                    {step.action}
+                    <ArrowRight size={15} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
         </>
       ) : (
         <div className="section-page-heading">
           <div>
-            <div className="welcome-eyebrow">
-              <Folder size={14} /> TU CÓDIGO, ORGANIZADO
+            <div className="eyebrow">
+              <Folder size={14} /> Tu código, organizado
             </div>
             <h1>
               Proyectos<span className="accent-period">.</span>
             </h1>
             <p>Un espacio para cada idea. Retoma donde lo dejaste.</p>
           </div>
-          <button className="button dark" onClick={() => onNew()}>
-            <Plus size={16} /> Nuevo proyecto
+          <button className="button primary" onClick={() => onNew()}>
+            <Plus size={17} /> Nuevo proyecto
           </button>
         </div>
       )}
@@ -686,7 +825,7 @@ function Dashboard({
           </div>
           {allProjects ? (
             <label className="search-input">
-              <Search size={16} />
+              <Search size={17} />
               <input
                 aria-label="Filtrar proyectos"
                 placeholder="Buscar proyecto…"
@@ -695,27 +834,25 @@ function Dashboard({
               />
             </label>
           ) : (
-            <button className="button text" onClick={() => onNew()}>
-              <Plus size={16} />
-              Nuevo proyecto
-            </button>
+            <div className="section-actions">
+              <button
+                className="button ghost new-project-button"
+                title="Nuevo proyecto"
+                onClick={() => onNew()}
+              >
+                <Plus size={17} />
+                <span>Nuevo proyecto</span>
+              </button>
+            </div>
           )}
         </div>
         <div className="project-grid">
-          {filtered.map((p, index) => (
+          {visible.map((p, index) => (
             <button
               className="project-card"
               key={p.id}
               onClick={() => onOpen(p)}
             >
-              <div className="project-card-top">
-                <ProjectIcon template={p.template} large />
-                <span className="project-menu">
-                  <ArrowUpRight size={18} />
-                </span>
-              </div>
-              <h3>{p.name}</h3>
-              <p>{p.description || "Una nueva idea en construcción."}</p>
               <div className={`project-art art-${index % 3}`}>
                 <div className="art-window">
                   <div className="art-title">
@@ -740,57 +877,43 @@ function Dashboard({
                   {p.template === "react" ? "React + Vite" : "HTML · CSS · JS"}
                 </span>
               </div>
-              <div className="project-card-bottom">
-                <span>
-                  <GitBranch size={13} />
-                  Git
-                </span>
-                <span>{relativeDate(p.updatedAt)}</span>
+              <div className="project-card-body">
+                <div className="project-card-top">
+                  <ProjectIcon template={p.template} />
+                  <div>
+                    <h3>{p.name}</h3>
+                    <p>{p.description || "Una nueva idea en construcción."}</p>
+                  </div>
+                </div>
+                <div className="project-card-bottom">
+                  <span>
+                    <Clock3 size={14} />
+                    {relativeDate(p.updatedAt)}
+                  </span>
+                  <span className="project-open">
+                    Abrir <ArrowRight size={15} />
+                  </span>
+                </div>
               </div>
             </button>
           ))}
-          <button className="new-project-card" onClick={() => onNew()}>
-            <span>
-              <Plus size={24} />
-            </span>
-            <h3>Tu próxima gran idea</h3>
-            <p>
-              Un lienzo en blanco.
-              <br />
-              Todas las posibilidades.
-            </p>
-            <strong>
-              Crear proyecto <ArrowRight size={15} />
-            </strong>
-          </button>
+          {!query && (
+            <button className="new-project-card" onClick={() => onNew()}>
+              <span>
+                <Plus size={24} />
+              </span>
+              <h3>Tu próxima gran idea</h3>
+              <p>Un lienzo en blanco. Todas las posibilidades.</p>
+              <strong>
+                Crear proyecto <ArrowRight size={15} />
+              </strong>
+            </button>
+          )}
         </div>
         {allProjects && filtered.length === 0 && query && (
           <p className="muted">No hay proyectos que coincidan con «{query}».</p>
         )}
       </section>
-      {!allProjects && (
-        <div className="connect-banner">
-          <div className="connect-illustration">
-            <span>
-              <Command size={23} />
-            </span>
-            <span>
-              <Sparkles size={23} />
-            </span>
-            <span>
-              <Workflow size={23} />
-            </span>
-          </div>
-          <div>
-            <span className="mini-eyebrow">MEJOR, CON TUS HERRAMIENTAS</span>
-            <h3>Un buen equipo hace la diferencia.</h3>
-            <p>Conecta Codex, Claude y Codemagic a tu forma de trabajar.</p>
-          </div>
-          <button className="button light" onClick={onConnections}>
-            Explorar conexiones <ArrowUpRight size={16} />
-          </button>
-        </div>
-      )}
     </main>
   );
 }
@@ -806,14 +929,16 @@ function Code2Art() {
 
 function NewProjectModal({
   initialPrompt,
+  initialName,
   onClose,
   onCreated,
 }: {
   initialPrompt: string;
+  initialName: string;
   onClose: () => void;
-  onCreated: (project: Project) => Promise<void>;
+  onCreated: (project: Project, description: string) => Promise<void>;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialPrompt);
   const [template, setTemplate] = useState<"web" | "react">("web");
   const [busy, setBusy] = useState(false);
@@ -829,6 +954,7 @@ function NewProjectModal({
           description,
           template,
         }),
+        description,
       );
     } catch (e) {
       setError(errorMessage(e));
@@ -838,7 +964,7 @@ function NewProjectModal({
   return (
     <Modal
       title="Dale espacio a tu idea"
-      subtitle="Elige un punto de partida. Hazlo tuyo."
+      subtitle="Ponle nombre y elige un punto de partida. Podrás cambiarlo todo después."
       onClose={onClose}
     >
       <form onSubmit={submit} className="stack-form">
@@ -861,30 +987,38 @@ function NewProjectModal({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
+          {initialPrompt && (
+            <small className="field-hint">
+              Tu agente recibirá esta descripción como primer encargo.
+            </small>
+          )}
         </label>
-        <label>Punto de partida</label>
-        <div className="template-options">
-          {(["web", "react"] as const).map((t) => (
-            <button
-              type="button"
-              className={`template-option ${template === t ? "selected" : ""}`}
-              key={t}
-              onClick={() => setTemplate(t)}
-            >
-              <ProjectIcon template={t} />
-              <strong>{t === "web" ? "Web esencial" : "React + Vite"}</strong>
-              <small>
-                {t === "web"
-                  ? "HTML, CSS y JavaScript"
-                  : "Componentes, JSX y estilos"}
-              </small>
-              {template === t && (
-                <span className="template-check">
-                  <Check size={13} />
-                </span>
-              )}
-            </button>
-          ))}
+        <div className="field-group">
+          <span className="field-label">Punto de partida</span>
+          <div className="template-options">
+            {(["web", "react"] as const).map((t) => (
+              <button
+                type="button"
+                className={`template-option ${template === t ? "selected" : ""}`}
+                aria-pressed={template === t}
+                key={t}
+                onClick={() => setTemplate(t)}
+              >
+                <ProjectIcon template={t} />
+                <strong>{t === "web" ? "Web esencial" : "React + Vite"}</strong>
+                <small>
+                  {t === "web"
+                    ? "HTML, CSS y JavaScript"
+                    : "Componentes, JSX y estilos"}
+                </small>
+                {template === t && (
+                  <span className="template-check">
+                    <Check size={13} strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
         {error && (
           <div className="inline-error" role="alert">
@@ -893,10 +1027,10 @@ function NewProjectModal({
         )}
         <div className="form-footer">
           <span>
-            <ShieldCheck size={14} /> Tu código permanece en tu servidor.
+            <ShieldCheck size={15} /> Tu código permanece en tu servidor.
           </span>
-          <button className="button dark" disabled={busy || !name.trim()}>
-            {busy ? <Spinner /> : <Plus size={16} />} Crear proyecto
+          <button className="button primary" disabled={busy || !name.trim()}>
+            {busy ? <Spinner /> : <Plus size={17} />} Crear proyecto
           </button>
         </div>
       </form>
@@ -913,31 +1047,61 @@ function SearchModal({
   onOpen: (project: Project) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const results = projects.filter((p) =>
+    p.name.toLowerCase().includes(query.toLowerCase()),
+  );
   return (
     <Modal title="Salta a un proyecto" onClose={onClose}>
       <label className="search-input large">
-        <Search size={18} />
+        <Search size={19} />
         <input
           placeholder="Escribe para buscar…"
           aria-label="Buscar proyecto"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((i) => Math.min(i + 1, results.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((i) => Math.max(i - 1, 0));
+            } else if (e.key === "Enter" && results[active]) {
+              e.preventDefault();
+              onOpen(results[active]);
+            }
+          }}
         />
       </label>
       <div className="project-search-results">
-        {projects
-          .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
-          .map((p) => (
-            <button onClick={() => onOpen(p)} key={p.id}>
-              <ProjectIcon template={p.template} />
-              <div>
-                <strong>{p.name}</strong>
-                <small>{p.description}</small>
-              </div>
-              <ArrowRight size={17} />
-            </button>
-          ))}
+        {results.map((p, i) => (
+          <button
+            className={i === active ? "active" : ""}
+            onClick={() => onOpen(p)}
+            onMouseEnter={() => setActive(i)}
+            key={p.id}
+          >
+            <ProjectIcon template={p.template} />
+            <div>
+              <strong>{p.name}</strong>
+              <small>{p.description || "Sin descripción"}</small>
+            </div>
+            <ArrowRight size={17} />
+          </button>
+        ))}
+        {!results.length && (
+          <p className="search-empty">
+            No hay proyectos que coincidan con «{query}».
+          </p>
+        )}
       </div>
+      <p className="search-hint">
+        <kbd>↑</kbd> <kbd>↓</kbd> para moverte · <kbd>Enter</kbd> para abrir
+      </p>
     </Modal>
   );
 }
@@ -970,11 +1134,11 @@ function ConnectScreen({
     <main className="connect-screen">
       <div className="connect-screen-card">
         <Logo />
-        <span className="welcome-eyebrow">APPBUILDER STUDIO</span>
+        <span className="eyebrow">AppBuilder Studio</span>
         <h1>
           Tu estudio.
           <br />
-          Donde tú estés.
+          <span className="gradient-text">Donde tú estés.</span>
         </h1>
         <p>
           {offline
@@ -1014,29 +1178,29 @@ function ConnectScreen({
           {offline && !isNative ? (
             <button
               type="button"
-              className="button dark"
+              className="button primary large"
               onClick={() => void retry()}
             >
-              Volver a conectar <ArrowRight size={16} />
+              Volver a conectar <ArrowRight size={17} />
             </button>
           ) : (
-            <button className="button dark" disabled={busy}>
+            <button className="button primary large" disabled={busy}>
               {busy ? (
                 <Spinner />
               ) : (
                 <>
-                  Entrar en mi estudio <ArrowRight size={16} />
+                  Entrar en mi estudio <ArrowRight size={17} />
                 </>
               )}
             </button>
           )}
         </form>
         <small>
-          <ShieldCheck size={14} /> Conexión privada con tu entorno de
+          <ShieldCheck size={15} /> Conexión privada con tu entorno de
           desarrollo.
         </small>
       </div>
-      <div className="connect-screen-art">
+      <div className="connect-screen-art" aria-hidden="true">
         <Code2Art />
         <span>IDEAS IN. APPS OUT.</span>
       </div>

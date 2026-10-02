@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
   appId: "dev.appbuilder.studio",
   appName: "AppBuilder",
   webDir: "dist",
-  backgroundColor: "#0b1014",
+  backgroundColor: "#f6f6fb",
   server: {
     androidScheme: "https",
     cleartext: false,
@@ -16,10 +16,10 @@ const config: CapacitorConfig = {
   },
   android: {
     allowMixedContent: false,
-    backgroundColor: "#0b1014",
+    backgroundColor: "#f6f6fb",
   },
   ios: {
-    backgroundColor: "#0b1014",
+    backgroundColor: "#f6f6fb",
     contentInset: "automatic",
   },
 };

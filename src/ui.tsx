@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowUpRight,
+  Atom,
   Check,
   Code2,
   Globe2,
@@ -11,7 +12,7 @@ import {
 export function Logo({ small = false }: { small?: boolean }) {
   return (
     <span className={`brand-mark ${small ? "small" : ""}`}>
-      <Code2 size={small ? 18 : 25} strokeWidth={2.5} />
+      <Code2 size={small ? 17 : 22} strokeWidth={2.5} />
     </span>
   );
 }
@@ -58,11 +59,14 @@ export function Modal({
     const previous = document.activeElement as HTMLElement;
     const bodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // Start in the first field so people can type right away; dialogs
+    // without fields focus their close button, never a destructive action.
     const timer = setTimeout(
       () =>
-        ref.current
-          ?.querySelector<HTMLElement>("input,textarea,button")
-          ?.focus(),
+        (
+          ref.current?.querySelector<HTMLElement>("input,textarea,select") ??
+          ref.current?.querySelector<HTMLElement>("button")
+        )?.focus(),
       30,
     );
     const handler = (event: KeyboardEvent) => {
@@ -130,9 +134,9 @@ export function ProjectIcon({
   return (
     <span className={`project-icon ${template} ${large ? "large" : ""}`}>
       {template === "react" ? (
-        <Code2 size={large ? 26 : 21} />
+        <Atom size={large ? 24 : 19} />
       ) : (
-        <Globe2 size={large ? 26 : 21} />
+        <Globe2 size={large ? 24 : 19} />
       )}
     </span>
   );
@@ -140,12 +144,13 @@ export function ProjectIcon({
 export function StatusDot({ active }: { active?: boolean }) {
   return <span className={`status-dot ${active ? "active" : ""}`} />;
 }
+export type Tone = "" | "success" | "danger" | "warning" | "info" | "accent";
 export function Tag({
   children,
   tone = "",
 }: {
   children: ReactNode;
-  tone?: string;
+  tone?: Tone;
 }) {
   return <span className={`tag ${tone}`}>{children}</span>;
 }
@@ -180,4 +185,25 @@ export function relativeDate(date: string) {
     day: "numeric",
     month: "short",
   }).format(new Date(date));
+}
+export function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(
+    () => window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const update = () => setMatches(list.matches);
+    update();
+    list.addEventListener("change", update);
+    return () => list.removeEventListener("change", update);
+  }, [query]);
+  return matches;
+}
+/** True on phone-sized screens, where side panels become overlays. */
+export function isCompactScreen() {
+  return window.matchMedia("(max-width: 700px)").matches;
+}
+/** True when the main input is touch, so Enter should insert a new line. */
+export function isTouchInput() {
+  return window.matchMedia("(pointer: coarse)").matches;
 }
