@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Braces,
+  FolderGit2,
   GitBranch as Github,
   Globe2,
   KeyRound,
@@ -79,7 +80,7 @@ const metadata: Record<
   github: {
     category: "CÓDIGO FUENTE",
     description:
-      "Explora tus repositorios y accede a su código y actividad en GitHub.",
+      "Importa tus repositorios al estudio y sube los cambios que hagas desde la app.",
     label: "GitHub",
     docs: "https://github.com/settings/tokens",
     color: "violet",
@@ -104,10 +105,12 @@ export function Connections({
   connections,
   refresh,
   notify,
+  onImport,
 }: {
   connections: Connection[];
   refresh: () => Promise<void>;
   notify: ToastFn;
+  onImport: () => void;
 }) {
   const [editing, setEditing] = useState<Connection | null>(null);
   const [testing, setTesting] = useState("");
@@ -267,7 +270,16 @@ export function Connections({
                             )}
                             Probar
                           </button>
-                          {["apple", "google", "github"].includes(c.id) && (
+                          {c.id === "github" && (
+                            <button
+                              className="button small primary"
+                              onClick={onImport}
+                            >
+                              <FolderGit2 size={15} />
+                              Importar repositorio
+                            </button>
+                          )}
+                          {["apple", "google"].includes(c.id) && (
                             <button
                               className="button small secondary"
                               onClick={() => setExploring(c)}
@@ -445,6 +457,17 @@ function ConnectionModal({
               {connection.id === "codex"
                 ? "Esta opción usa una API key con facturación independiente. Para usar tu suscripción, pulsa «Usar cuenta ChatGPT» en la tarjeta de Codex."
                 : "Esta opción usa una API key con facturación independiente. Para usar Claude Code instalado e iniciado en tu ordenador, pulsa «Usar Claude Code» en la tarjeta de Claude."}
+            </p>
+          </div>
+        )}
+        {connection.id === "github" && (
+          <div className="notice">
+            <KeyRound size={17} />
+            <p>
+              Crea un token «fine-grained» con acceso a tus repositorios y el
+              permiso <strong>Contents: Read and write</strong> para poder
+              importar y subir cambios. El token solo se usa para hablar con
+              GitHub y nunca se guarda dentro de los proyectos.
             </p>
           </div>
         )}

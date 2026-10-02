@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   createProject,
   deleteFile,
+  deleteProject,
   getProject,
   httpError,
   isProtectedName,
@@ -16,6 +17,7 @@ import {
   readFile,
   writeFile,
 } from "./workspace.js";
+import { publicRemoteUrl, remoteLabel, remoteWebUrl } from "./remotes.js";
 import {
   cancelJob,
   commandEnvironment,
@@ -94,10 +96,98 @@ function parseStatus(output: string): Change[] {
   return result;
 }
 
+export type GitRemote = {
+  url: string;
+  label: string;
+  webUrl?: string;
+  upstream: string | null;
+  /** Local commits that the remote does not have yet. */
+  ahead: number;
+  /** Remote commits already fetched but not merged. */
+  behind: number;
+};
+
+/** Reads origin and the ahead/behind counts from local refs; never touches the network. */
+async function remoteSummary(projectId: string): Promise<GitRemote | null> {
+  const url = (
+    await git(projectId, ["remote", "get-url", "origin"]).catch(() => "")
+  ).trim();
+  if (!url) return null;
+  const upstream = (
+    await git(projectId, [
+      "rev-parse",
+      "--abbrev-ref",
+      "--symbolic-full-name",
+      "@{upstream}",
+    ]).catch(() => "")
+  ).trim();
+  const counts = upstream
+    ? (
+        await git(projectId, [
+          "rev-list",
+          "--left-right",
+          "--count",
+          "HEAD...@{upstream}",
+        ]).catch(() => "")
+      )
+        .trim()
+        .split(/\s+/)
+    : [
+        (
+          await git(projectId, [
+            "rev-list",
+            "--count",
+            "HEAD",
+            "--not",
+            "--remotes",
+          ]).catch(() => "0")
+        ).trim(),
+        "0",
+      ];
+  const publicUrl = publicRemoteUrl(url);
+  return {
+    url: publicUrl,
+    label: remoteLabel(publicUrl),
+    webUrl: remoteWebUrl(publicUrl),
+    upstream: upstream || null,
+    ahead: Number(counts[0]) || 0,
+    behind: Number(counts[1]) || 0,
+  };
+}
+
+/** True while a commit or restore holds this project's Git index. */
+export function gitLocked(projectId: string): boolean {
+  return commitsInProgress.has(projectId);
+}
+
+function assertNoSync(projectId: string): void {
+  if (
+    listJobs(projectId).some(
+      (job) => job.kind === "git" && job.status === "running",
+    )
+  )
+    throw httpError(
+      409,
+      "Hay una sincronización con el repositorio remoto en curso. Espera a que termine.",
+    );
+}
+
+/** Commits as the person configured in Git; AppBuilder only fills a missing identity. */
+async function commitIdentity(projectId: string): Promise<string[]> {
+  const [name, email] = await Promise.all([
+    git(projectId, ["config", "--get", "user.name"]).catch(() => ""),
+    git(projectId, ["config", "--get", "user.email"]).catch(() => ""),
+  ]);
+  return name.trim() && email.trim()
+    ? []
+    : ["-c", "user.name=AppBuilder", "-c", "user.email=local@appbuilder.dev"];
+}
+
 export async function getGitStatus(projectId: string): Promise<{
   branch: string;
   changes: Change[];
   log: { hash: string; message: string; date: string }[];
+  remote: GitRemote | null;
 }> {
   const directory = projectDir(projectId);
   const gitPath = path.join(directory, ".git");
@@ -110,12 +200,13 @@ export async function getGitStatus(projectId: string): Promise<{
       400,
       "El proyecto no tiene un repositorio Git local válido.",
     );
-  const [branch, status, log] = await Promise.all([
+  const [branch, status, log, remote] = await Promise.all([
     git(projectId, ["branch", "--show-current"]),
     git(projectId, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
     git(projectId, ["log", "-12", "--format=%H%x00%s%x00%aI%x00"]).catch(
       () => "",
     ),
+    remoteSummary(projectId),
   ]);
   const logParts = log.trim().split("\0");
   const entries: { hash: string; message: string; date: string }[] = [];
@@ -129,6 +220,7 @@ export async function getGitStatus(projectId: string): Promise<{
     branch: branch.trim() || "HEAD",
     changes: parseStatus(status),
     log: entries,
+    remote,
   };
 }
 
@@ -140,6 +232,7 @@ async function commitChanges(
 ): Promise<{ hash: string; created: boolean }> {
   if (commitsInProgress.has(projectId))
     throw httpError(409, "Ya se está guardando un commit en este proyecto.");
+  assertNoSync(projectId);
   commitsInProgress.add(projectId);
   try {
     const status = await getGitStatus(projectId);
@@ -190,10 +283,7 @@ async function commitChanges(
         "Hay archivos de credenciales preparados en Git. Retíralos del índice antes de guardar el commit.",
       );
     await git(projectId, [
-      "-c",
-      "user.name=AppBuilder",
-      "-c",
-      "user.email=local@appbuilder.dev",
+      ...(await commitIdentity(projectId)),
       "commit",
       "-m",
       message,
@@ -258,6 +348,7 @@ export async function restoreFile(
   protectedPath(projectId, relativePath, true);
   if (commitsInProgress.has(projectId))
     throw httpError(409, "Ya hay una operación de Git en curso.");
+  assertNoSync(projectId);
   commitsInProgress.add(projectId);
   try {
     const pathspec = ":(literal)" + relativePath.replaceAll("\\", "/");
@@ -302,6 +393,25 @@ export function createCoreRouter(): Router {
   router.get("/projects/:id", (req, res) =>
     res.json(getProject(req.params.id)),
   );
+  router.get("/projects/:id/details", (req, res) =>
+    res.json({
+      ...getProject(req.params.id),
+      directory: projectDir(req.params.id),
+    }),
+  );
+  router.delete("/projects/:id", (req, res) => {
+    const id = req.params.id;
+    getProject(id);
+    if (listJobs(id).some((job) => job.status === "running"))
+      throw httpError(
+        409,
+        "Hay tareas en curso en este proyecto. Espera a que terminen o cancélalas antes de eliminarlo.",
+      );
+    if (commitsInProgress.has(id))
+      throw httpError(409, "Hay una operación de Git en curso.");
+    deleteProject(id);
+    res.json({ ok: true });
+  });
   router.get("/projects/:id/files", (req, res) =>
     res.json(listFiles(req.params.id)),
   );

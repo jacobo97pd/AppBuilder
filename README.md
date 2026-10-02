@@ -18,11 +18,11 @@ Abre **http://127.0.0.1:4310**. Se crea automáticamente un proyecto editable, *
 
 ## Qué funciona
 
-- Crear proyectos Web (HTML/CSS/JS) y React; persistencia en `.appbuilder/projects`.
+- Crear proyectos Web (HTML/CSS/JS) y React, o importar un repositorio existente de GitHub (o cualquier remoto HTTPS); persistencia en `.appbuilder/projects`.
 - Explorar, crear, editar y guardar archivos con autocompletado. Protección de cambios sin guardar y conflictos con el archivo del servidor.
 - Terminal por comandos con stdout/stderr real, historial persistente, cancelación de procesos secundarios, cuatro tareas simultáneas y límite de duración. **No es un PTY interactivo**: usa comandos no interactivos o encadena operaciones en un mismo comando; `cd` no persiste entre trabajos.
 - Vista previa del HTML o React guardado, recompilación y consola. El iframe tiene origen aislado y no comparte credenciales ni almacenamiento con el editor. Las plantillas usan memoria cuando el navegador restringe localStorage; el estado de la app de ejemplo puede reiniciarse al actualizar la preview.
-- Git: estado, diferencias por archivo, commits, restauración de archivos y checkpoint automático antes de tareas de IA.
+- Git: estado, diferencias por archivo, commits, restauración de archivos y checkpoint automático antes de tareas de IA. En proyectos importados: traer cambios (solo avance rápido), subir la rama actual y ver los commits pendientes en cada sentido.
 - Integraciones reales mediante la cuenta ChatGPT iniciada en Codex o las claves que añadas en **Conexiones**. Nunca se simulan respuestas de proveedores.
 - PWA instalable y proyectos Capacitor para Android/iOS con interfaz empaquetada y configuración de servidor HTTPS.
 
@@ -34,9 +34,21 @@ Abre **http://127.0.0.1:4310**. Se crea automáticamente un proyecto editable, *
 | Codemagic         | Iniciar/cancelar builds, consultar estados y enlaces a artefactos y registros         | Token, repositorio registrado, App ID, workflow y rama remota                                |
 | App Store Connect | Autenticación JWT y consulta de apps                                                  | Issuer ID, Key ID, clave .p8 y permisos de la cuenta                                         |
 | Google Play       | Cuenta de servicio, consulta de canales y versiones                                   | API habilitada, permisos y package name existente                                            |
-| GitHub            | Consulta de repositorios                                                              | Token con permisos apropiados                                                                |
+| GitHub            | Elegir repositorios, importarlos (clonar) y sincronizar con pull/push                 | Token fine-grained con «Contents: Read and write», o una sesión de Git en el servidor        |
 
-La publicación final en tiendas, gestión completa de certificados, firma y subida de binarios no están implementadas. Los proyectos locales tampoco se publican ni sincronizan automáticamente con GitHub: puedes usar Git desde la terminal para configurar un remoto y hacer push. Codemagic compila la rama del repositorio remoto, no los archivos sin subir del estudio.
+La publicación final en tiendas, gestión completa de certificados, firma y subida de binarios no están implementadas. Los proyectos creados desde plantilla no se publican en GitHub por sí solos: puedes añadir un remoto desde la terminal (`git remote add origin URL`) y, a partir de ahí, usar los botones de sincronización. Codemagic compila la rama del repositorio remoto, no los archivos sin subir del estudio.
+
+## Trabajar con repositorios de GitHub
+
+Pulsa **Importar de GitHub** (barra lateral, inicio o Proyectos). Si GitHub está conectado en **Conexiones**, eliges el repositorio de una lista; si no, pegas la dirección (`https://github.com/usuario/proyecto` o `usuario/proyecto`). El repositorio se clona **en el servidor** como una tarea con progreso que puedes cancelar; si falla, no deja restos.
+
+- **Acceso**: con un token de GitHub guardado en Conexiones, AppBuilder lo envía como cabecera HTTP temporal solo a github.com; nunca se escribe en `.git/config` ni en los argumentos del proceso. Sin token, Git puede usar la sesión que ya tengas en ese ordenador (por ejemplo, Git Credential Manager), siempre sin ventanas interactivas.
+- **Descarga ligera**: clona solo la última versión y omite los archivos de Git LFS. Se sugiere para repositorios grandes, como proyectos de Unity, cuando vas a editar código.
+- **Sincronizar**: en la pestaña **Cambios** verás el remoto, los commits por subir y por traer, y los botones **Traer cambios** y **Subir a GitHub**. Puedes marcar que cada commit se suba automáticamente. Traer cambios solo avanza en línea recta (`--ff-only`); si tu copia y el remoto divergen, combínalos desde la terminal o con el agente.
+- **Autoría**: los commits usan la identidad configurada en Git en el servidor (`user.name` y `user.email`); AppBuilder solo rellena una identidad propia si no existe ninguna. Los puntos de restauración que se crean antes de cada tarea del agente también son commits y se subirán con el resto.
+- **Ajustes del proyecto** (icono de la barra de herramientas): muestra el origen, la carpeta en el servidor y permite eliminar la copia local. Lo que ya está en el remoto no se toca.
+
+Solo se importan direcciones HTTPS. El explorador muestra hasta 20.000 elementos, con carpetas plegables, y el editor abre archivos de texto de hasta 2 MB.
 
 ## Conexiones y almacenamiento
 

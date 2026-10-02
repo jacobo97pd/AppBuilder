@@ -15,7 +15,7 @@ export type JobStatus = "running" | "succeeded" | "failed" | "cancelled";
 export interface Job {
   id: string;
   projectId: string;
-  kind: "terminal" | "agent" | "build";
+  kind: "terminal" | "agent" | "build" | "git";
   title: string;
   status: JobStatus;
   output: string;
@@ -230,6 +230,11 @@ export function registerJobCancellation(
     return;
   }
   if (job.status === "running") cancellations.set(id, cancel);
+}
+
+/** True between a cancellation request and the job being marked cancelled. */
+export function isCancelling(id: string): boolean {
+  return cancellationRequests.has(id);
 }
 
 export async function cancelJob(id: string): Promise<Job> {

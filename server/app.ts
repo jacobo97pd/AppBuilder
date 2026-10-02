@@ -10,6 +10,7 @@ import { createCoreRouter } from "./core.js";
 import { createIntegrationsRouter, redactSecrets } from "./integrations.js";
 import { configureJobRedaction } from "./jobs.js";
 import { createPreviewRouter } from "./preview.js";
+import { createRepositoriesRouter } from "./repositories.js";
 import { APP_VERSION } from "../version.js";
 
 const nativeOrigins = new Set([
@@ -204,6 +205,7 @@ export function createApp(
   app.use("/api", createCoreRouter());
   app.use("/api", createIntegrationsRouter());
   app.use("/api", createPreviewRouter());
+  app.use("/api", createRepositoriesRouter());
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Esta operación no existe." });
   });

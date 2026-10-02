@@ -4,10 +4,12 @@ import {
   Atom,
   Check,
   Code2,
+  FolderGit2,
   Globe2,
   LoaderCircle,
   X,
 } from "lucide-react";
+import type { Project } from "./types";
 
 export function Logo({ small = false }: { small?: boolean }) {
   return (
@@ -131,15 +133,36 @@ export function ProjectIcon({
   template: string;
   large?: boolean;
 }) {
+  const size = large ? 24 : 19;
   return (
     <span className={`project-icon ${template} ${large ? "large" : ""}`}>
       {template === "react" ? (
-        <Atom size={large ? 24 : 19} />
+        <Atom size={size} />
+      ) : template === "repo" ? (
+        <FolderGit2 size={size} />
       ) : (
-        <Globe2 size={large ? 24 : 19} />
+        <Globe2 size={size} />
       )}
     </span>
   );
+}
+/** Short origin label: GitHub/Git for imported repositories, else the template. */
+export function projectKind(project: Project): string {
+  if (project.template === "repo")
+    return /github\.com/i.test(project.source?.url ?? "") ? "GitHub" : "Git";
+  return project.template === "react" ? "React" : "Web";
+}
+/** owner/repo for imported projects, otherwise the template stack. */
+export function projectStack(project: Project): string {
+  if (project.template === "repo")
+    return (
+      (project.source?.url ?? "")
+        .replace(/\.git$/i, "")
+        .split("/")
+        .slice(-2)
+        .join("/") || "Repositorio Git"
+    );
+  return project.template === "react" ? "React + Vite" : "HTML · CSS · JS";
 }
 export function StatusDot({ active }: { active?: boolean }) {
   return <span className={`status-dot ${active ? "active" : ""}`} />;

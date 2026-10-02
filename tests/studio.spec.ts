@@ -440,3 +440,64 @@ test("missing credentials disable execution and builds, and offer real setup", a
   ).toBeVisible();
   await noPageOverflow(page);
 });
+
+test("the GitHub import explains invalid addresses without cloning anything", async ({
+  page,
+}) => {
+  await openStudio(page);
+  await page
+    .locator("main")
+    .getByRole("button", { name: "Importar de GitHub", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Trae tu proyecto de GitHub",
+  });
+  await expect(
+    dialog.getByRole("tab", { name: /Desde GitHub/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await dialog
+    .getByLabel("Dirección del repositorio")
+    .fill("http://github.com/usuario/proyecto");
+  await expect(dialog.getByLabel("Nombre en tu estudio")).toHaveValue(
+    "proyecto",
+  );
+  await dialog
+    .getByRole("button", { name: "Importar proyecto", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText("HTTPS");
+  await noPageOverflow(page);
+  await dialog.getByRole("tab", { name: /Desde una plantilla/ }).click();
+  // The dialog title follows the selected tab.
+  await expect(
+    page.getByRole("dialog").getByLabel("Nombre del proyecto"),
+  ).toBeVisible();
+  const projects = (await (
+    await page.request.get("/api/projects")
+  ).json()) as Project[];
+  expect(projects.some((project) => project.name === "proyecto")).toBe(false);
+});
+
+test("the explorer folds folders and search reaches every file", async ({
+  page,
+}, testInfo) => {
+  await openStudio(page);
+  await newProject(page, `Árbol ${testInfo.project.name}`, "react");
+  if (testInfo.project.name === "mobile")
+    await page.getByRole("button", { name: "Mostrar archivos" }).click();
+  const explorer = page.locator(".file-explorer");
+  const folder = explorer.getByRole("button", { name: "src", exact: true });
+  await expect(folder).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    explorer.getByRole("button", { name: /^main\.jsx/ }),
+  ).toBeVisible();
+  await folder.click();
+  await expect(folder).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    explorer.getByRole("button", { name: /^main\.jsx/ }),
+  ).toHaveCount(0);
+  await explorer.getByLabel("Buscar archivo").fill("main");
+  await expect(
+    explorer.getByRole("button", { name: /^main\.jsx/ }),
+  ).toBeVisible();
+  await noPageOverflow(page);
+});

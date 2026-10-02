@@ -109,7 +109,7 @@ const definitions: Record<ConnectionId, ConnectionDefinition> = {
   },
   github: {
     name: "GitHub",
-    description: "Consultar repositorios de tu cuenta",
+    description: "Importar y sincronizar repositorios de tu cuenta",
     fields: [
       {
         key: "token",
@@ -977,6 +977,11 @@ export function createIntegrationsRouter(): Router {
         url: repo.html_url,
         cloneUrl: repo.clone_url,
         branch: repo.default_branch,
+        description:
+          typeof repo.description === "string" ? repo.description : "",
+        updatedAt: repo.pushed_at || repo.updated_at,
+        // GitHub reports the repository size in KB.
+        sizeKb: typeof repo.size === "number" ? repo.size : undefined,
       })),
     });
   });

@@ -267,6 +267,7 @@ kbd {
 .visually-hidden,
 .rail .nav-label,
 .rail .sidebar-create span,
+.rail .sidebar-import span,
 .rail .sidebar-help span,
 .rail .sidebar-status-text {
   position: absolute;
@@ -479,6 +480,10 @@ kbd {
   background: var(--coral-soft);
   color: var(--coral);
 }
+.project-icon.repo {
+  background: var(--violet-soft);
+  color: var(--violet);
+}
 .project-icon.react {
   background: var(--sky-soft);
   color: var(--sky);
@@ -617,7 +622,7 @@ kbd {
   justify-content: center;
   gap: 8px;
   height: 44px;
-  margin: 26px 0 20px;
+  margin: 26px 0 8px;
   border-radius: 12px;
   background: var(--gradient-button);
   color: #fff;
@@ -635,6 +640,27 @@ kbd {
 }
 .sidebar-create:active {
   transform: translateY(1px);
+}
+.sidebar-import {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  margin-bottom: 18px;
+  border: 1px solid var(--nav-line);
+  border-radius: 12px;
+  background: rgba(29, 26, 61, 0.6);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--nav-text);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.sidebar-import:hover {
+  background: var(--nav-hover);
+  color: #fff;
 }
 .sidebar-nav {
   display: flex;
@@ -750,6 +776,9 @@ kbd {
   border-radius: 3px;
   background: #ff9a7a;
 }
+.mini-project-dot.repo {
+  background: #b9a8ff;
+}
 .mini-project-dot.react {
   background: #5cc3ff;
 }
@@ -854,7 +883,11 @@ kbd {
 .rail .sidebar-create {
   width: 48px;
   height: 48px;
-  margin: 24px 0 18px;
+  margin: 24px 0 8px;
+}
+.rail .sidebar-import {
+  width: 48px;
+  height: 44px;
 }
 .rail .sidebar-nav {
   width: 100%;
@@ -2109,6 +2142,335 @@ kbd {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+.section-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mode-switch {
+  display: flex;
+  gap: 4px;
+  margin: -6px 0 20px;
+  padding: 4px;
+  border-radius: 13px;
+  background: var(--surface-3);
+}
+.mode-switch button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  transition:
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+}
+.mode-switch button:hover {
+  color: var(--ink);
+}
+.mode-switch button.active {
+  background: var(--surface);
+  color: var(--brand-strong);
+  box-shadow: var(--shadow-sm);
+}
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 248px;
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.repo-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--text);
+}
+.repo-option > svg:first-child {
+  color: var(--violet);
+}
+.repo-option > span {
+  flex: 1;
+  min-width: 0;
+}
+.repo-option strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.repo-option small {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.repo-option:hover {
+  background: var(--surface-3);
+}
+.repo-option.selected {
+  background: var(--brand-soft);
+  box-shadow: inset 0 0 0 1px var(--brand-soft-2);
+}
+.repo-private {
+  color: var(--muted);
+}
+.repo-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.repo-empty.error {
+  color: var(--danger-strong);
+}
+.search-input .icon-button {
+  width: 30px;
+  height: 30px;
+  margin-right: -6px;
+}
+/* A search box inside a form keeps its inline layout. */
+.stack-form .search-input {
+  flex-direction: row;
+  gap: 8px;
+  font-weight: 400;
+}
+.stack-form .search-input input {
+  flex: 1;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none !important;
+}
+.import-connect > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.import-connect .button {
+  margin-left: -10px;
+}
+.import-options {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.import-options > summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.import-options[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+.import-options > label {
+  margin: 14px;
+}
+.checkbox-row {
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 10px !important;
+  cursor: pointer;
+}
+.checkbox-row input[type="checkbox"] {
+  width: 18px !important;
+  height: 18px !important;
+  margin: 2px 0 0;
+  padding: 0;
+  flex-shrink: 0;
+  accent-color: var(--brand);
+}
+.checkbox-row strong {
+  display: block;
+  font-size: 14px;
+  color: var(--ink);
+}
+.checkbox-row small {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.checkbox-row.compact {
+  display: flex;
+  align-items: center;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+.checkbox-row.compact input[type="checkbox"] {
+  margin: 0;
+}
+.import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.import-progress-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--brand-soft-2);
+  border-radius: 14px;
+  background: #f7f5ff;
+  color: var(--brand);
+}
+.import-progress-head.succeeded {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+  color: var(--success);
+}
+.import-progress-head.failed,
+.import-progress-head.cancelled {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+}
+.import-progress-head > svg {
+  margin-top: 1px;
+}
+.import-progress-head strong {
+  display: block;
+  font-size: 15px;
+  color: var(--ink);
+}
+.import-progress-head small {
+  display: block;
+  margin-top: 3px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.import-log {
+  max-height: 240px;
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  border-radius: 14px;
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--code-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.project-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.project-details > div {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--surface-2);
+}
+.project-details dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.project-details dd {
+  min-width: 0;
+  font-size: 14px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.project-details code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.project-directory {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.project-directory .icon-button {
+  width: 30px;
+  height: 30px;
+}
+.danger-zone {
+  padding: 16px;
+  border: 1px solid var(--danger-line);
+  border-radius: 14px;
+  background: #fffafa;
+}
+.danger-zone h3 {
+  font-size: 15px;
+}
+.danger-zone > p {
+  margin: 4px 0 14px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.danger-zone .inline-error {
+  margin-bottom: 12px;
+}
+.danger-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -6px 0 12px;
+  font-size: 13px;
+  color: var(--warning-strong);
+}
+.danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.button.danger {
+  background: var(--danger-strong);
+  color: #fff;
+}
+.button.danger:hover:not(:disabled) {
+  background: #9a1c22;
+}
+.button.danger-outline {
+  border-color: var(--danger-line);
+  background: var(--surface);
+  color: var(--danger-strong);
+}
+.button.danger-outline:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
 .inline-error {
   padding: 12px 14px;
   border: 1px solid var(--danger-line);
@@ -2735,9 +3097,32 @@ kbd {
   text-align: left;
   white-space: nowrap;
 }
-.file-row > span:not(.unsaved-dot) {
+.file-row > .file-name {
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 78%;
+}
+.file-row > .file-parent {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.file-twisty {
+  display: inline-flex;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--subtle);
+}
+.file-twisty svg {
+  transition: transform 0.15s;
+}
+.file-twisty svg.open {
+  transform: rotate(90deg);
 }
 .file-row:hover:not(:disabled) {
   background: var(--surface-3);
@@ -2747,14 +3132,15 @@ kbd {
   color: var(--brand-strong);
   font-weight: 600;
 }
-.file-row.directory,
-.file-row:disabled {
-  cursor: default;
-  opacity: 1;
-  color: var(--muted);
+.file-row.directory {
+  color: var(--text);
+  font-weight: 500;
 }
 .folder-icon {
   color: #8b74ff;
+}
+.cs-file {
+  color: #7a5cf0;
 }
 .html-file {
   color: #e2643c;
@@ -3919,6 +4305,134 @@ kbd {
 .git-commit-form textarea::placeholder {
   color: var(--subtle);
 }
+.git-sync {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 14px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.git-sync.empty {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+  box-shadow: none;
+  background: var(--surface-2);
+}
+.git-sync.empty > svg {
+  margin-top: 2px;
+  color: var(--brand);
+}
+.git-sync code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.git-sync-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.git-sync-head > svg {
+  color: var(--violet);
+}
+.git-sync-head > div {
+  flex: 1;
+  min-width: 0;
+}
+.git-sync-head a,
+.git-sync-head strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.git-sync-head a:hover {
+  color: var(--brand-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.git-sync-head small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.git-sync-head .icon-button {
+  width: 32px;
+  height: 32px;
+}
+.git-sync-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.git-sync-counts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.git-sync-counts span.pending {
+  background: var(--warning-soft);
+  color: var(--warning-strong);
+  box-shadow: inset 0 0 0 1px var(--warning-line);
+}
+.git-sync-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.git-sync-actions .button {
+  padding: 0 8px;
+}
+.git-sync-status,
+.git-sync-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--brand-strong);
+}
+.git-sync-warning {
+  color: var(--warning-strong);
+}
+.git-sync-log summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger-strong);
+}
+.git-sync-log pre {
+  max-height: 200px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--code-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .git-commit-form small {
   font-size: 13px;
   line-height: 1.5;
@@ -4386,12 +4900,12 @@ kbd {
   .new-project-card strong {
     display: none;
   }
-  .section-actions .new-project-button {
+  .section-actions .compact-button {
     width: 40px;
     padding: 0;
     background: var(--brand-soft);
   }
-  .section-actions .new-project-button span {
+  .section-actions .compact-button span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -4836,6 +5350,27 @@ kbd {
   }
   .git-diff .empty-state {
     min-height: 220px;
+  }
+}
+@media (max-width: 700px) {
+  .project-details > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .section-page-actions {
+    width: 100%;
+  }
+  .section-page-actions .button {
+    flex: 1;
+  }
+  .import-log {
+    max-height: 180px;
+  }
+}
+@media (max-width: 480px) {
+  /* The branch also shows in the editor status bar. */
+  .workspace-branch {
+    display: none;
   }
 }
 @media (max-width: 380px) {

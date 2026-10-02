@@ -4,11 +4,21 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { templateFiles, type ProjectTemplate } from "./templates.js";
 
+export interface ProjectSource {
+  /** Remote the project was cloned from, without credentials. */
+  url: string;
+  branch?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
   description: string;
-  template: ProjectTemplate;
+  /** "repo" marks a project cloned from an existing Git repository. */
+  template: ProjectTemplate | "repo";
+  source?: ProjectSource;
+  /** Set while the clone is running; such projects are not listed. */
+  importing?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -25,7 +35,10 @@ export const dataRoot = path.resolve(
 );
 const projectsRoot = path.join(dataRoot, "projects");
 const metadataPath = path.join(dataRoot, "projects.json");
+const seedMarker = path.join(dataRoot, ".seeded");
 const maxFileBytes = 2 * 1024 * 1024;
+// Imported repositories (for example Unity games) can hold many files.
+const maxListedEntries = 20_000;
 const forbiddenNames = new Set([
   ".git",
   ".appbuilder",
@@ -123,19 +136,28 @@ function saveProjects(projects: Project[]): void {
   fs.renameSync(temporary, metadataPath);
 }
 
+/** Seeds the example project once, so deleting every project does not bring it back. */
 export function ensureSeedProject(): Project | undefined {
   const projects = readProjects();
-  if (projects.length) return projects[0];
-  return createProject({
+  const seeded = fs.existsSync(seedMarker);
+  if (projects.length || seeded) {
+    if (!seeded) fs.writeFileSync(seedMarker, "", { mode: 0o600 });
+    return projects[0];
+  }
+  const project = createProject({
     name: "Orbit Notes",
     description: "Un espacio tranquilo para tus próximas grandes ideas.",
     template: "web",
   });
+  fs.writeFileSync(seedMarker, "", { mode: 0o600 });
+  return project;
 }
 
 export function listProjects(): Project[] {
   ensureSeedProject();
-  return readProjects().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return readProjects()
+    .filter((project) => !project.importing)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function getProject(id: string): Project {
@@ -237,7 +259,7 @@ export function listFiles(id: string): FileEntry[] {
   const root = projectDir(id);
   const result: FileEntry[] = [];
   function visit(directory: string, prefix: string, depth: number): void {
-    if (depth > 15 || result.length >= 4000) return;
+    if (depth > 20 || result.length >= maxListedEntries) return;
     const entries = fs
       .readdirSync(directory, { withFileTypes: true })
       .sort(
@@ -246,7 +268,7 @@ export function listFiles(id: string): FileEntry[] {
           a.name.localeCompare(b.name),
       );
     for (const entry of entries) {
-      if (result.length >= 4000) break;
+      if (result.length >= maxListedEntries) break;
       if (
         entry.isSymbolicLink() ||
         isProtectedName(entry.name) ||
@@ -349,38 +371,50 @@ export function deleteFile(id: string, relativePath: string): void {
   touchProject(id);
 }
 
-export function createProject(input: {
-  name: string;
-  template: ProjectTemplate;
-  description?: string;
-}): Project {
+function projectName(value: unknown): string {
   if (
-    typeof input.name !== "string" ||
-    input.name.trim().length < 1 ||
-    input.name.trim().length > 80
+    typeof value !== "string" ||
+    value.trim().length < 1 ||
+    value.trim().length > 80
   )
     throw httpError(
       400,
       "El nombre del proyecto debe tener entre 1 y 80 caracteres.",
     );
-  if (input.template !== "web" && input.template !== "react")
-    throw httpError(400, "La plantilla debe ser web o react.");
-  if (
-    input.description !== undefined &&
-    (typeof input.description !== "string" || input.description.length > 500)
-  )
+  return value.trim();
+}
+
+function projectDescription(value: unknown): string {
+  if (value !== undefined && (typeof value !== "string" || value.length > 500))
     throw httpError(
       400,
       "La descripción debe tener como máximo 500 caracteres.",
     );
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function projectsWithRoom(): Project[] {
   const projects = readProjects();
   if (projects.length >= 200)
     throw httpError(409, "Se ha alcanzado el límite de 200 proyectos locales.");
+  return projects;
+}
+
+export function createProject(input: {
+  name: string;
+  template: ProjectTemplate;
+  description?: string;
+}): Project {
+  const name = projectName(input.name);
+  if (input.template !== "web" && input.template !== "react")
+    throw httpError(400, "La plantilla debe ser web o react.");
+  const description = projectDescription(input.description);
+  const projects = projectsWithRoom();
   const now = new Date().toISOString();
   const project: Project = {
     id: randomUUID(),
-    name: input.name.trim(),
-    description: input.description?.trim() || "",
+    name,
+    description,
     template: input.template,
     createdAt: now,
     updatedAt: now,
@@ -424,4 +458,71 @@ export function createProject(input: {
   }
   saveProjects([...projects, project]);
   return project;
+}
+
+/**
+ * Registers a project whose folder `git clone` will create. It stays hidden
+ * from the project list until the clone completes.
+ */
+export function reserveImportedProject(input: {
+  name: unknown;
+  description?: unknown;
+  url: string;
+}): { project: Project; directory: string } {
+  const name = projectName(input.name);
+  const description = projectDescription(input.description);
+  const projects = projectsWithRoom();
+  const now = new Date().toISOString();
+  const project: Project = {
+    id: randomUUID(),
+    name,
+    description,
+    template: "repo",
+    source: { url: input.url },
+    importing: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  saveProjects([...projects, project]);
+  return { project, directory: path.join(projectsRoot, project.id) };
+}
+
+export function completeImportedProject(id: string, branch: string): Project {
+  const projects = readProjects();
+  const project = projects.find((item) => item.id === id);
+  if (!project) throw httpError(404, "No se ha encontrado el proyecto.");
+  delete project.importing;
+  if (project.source && branch) project.source.branch = branch;
+  project.updatedAt = new Date().toISOString();
+  saveProjects(projects);
+  return project;
+}
+
+/** Removes the project folder and its metadata. Remote repositories are untouched. */
+export function deleteProject(id: string): void {
+  getProject(id);
+  const directory = path.join(projectsRoot, id);
+  if (fs.existsSync(directory)) {
+    // Never follow a link out of the data directory; only remove the link.
+    if (fs.lstatSync(directory).isSymbolicLink()) fs.unlinkSync(directory);
+    else
+      fs.rmSync(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200,
+      });
+  }
+  saveProjects(readProjects().filter((item) => item.id !== id));
+}
+
+/** A restart interrupts any clone in progress; drop those partial projects. */
+export function cleanupInterruptedImports(): void {
+  for (const project of readProjects().filter((item) => item.importing)) {
+    try {
+      deleteProject(project.id);
+    } catch (error) {
+      console.error("No se pudo limpiar una importación interrumpida:", error);
+    }
+  }
 }

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createApp } from "./app.js";
-import { ensureSeedProject } from "./workspace.js";
+import { cleanupInterruptedImports, ensureSeedProject } from "./workspace.js";
 import { shutdownJobs } from "./jobs.js";
 
 const host = process.env.HOST || "127.0.0.1";
@@ -16,6 +16,7 @@ if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
     );
   }
 }
+cleanupInterruptedImports();
 ensureSeedProject();
 const server = createApp().listen(port, host, () => {
   console.log(`AppBuilder disponible en http://${host}:${port}`);

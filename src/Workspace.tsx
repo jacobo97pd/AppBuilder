@@ -14,15 +14,20 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  CloudDownload,
+  CloudUpload,
   Code2,
+  Copy,
   FileCode2,
   FileJson,
   FilePlus2,
   FileText,
   Folder,
+  FolderGit2,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  Info,
   Monitor,
   PanelRightClose,
   PanelRightOpen,
@@ -32,10 +37,12 @@ import {
   RotateCcw,
   Save,
   Search,
+  Settings2,
   Smartphone,
   Sparkles,
   Square,
   Terminal as TerminalIcon,
+  Trash2,
 } from "lucide-react";
 import { api, errorMessage, post } from "./api";
 import type {
@@ -52,12 +59,29 @@ import {
   isCompactScreen,
   isTouchInput,
   Modal,
+  projectKind,
   relativeDate,
   Spinner,
   StatusDot,
   Tag,
   type Tone,
 } from "./ui";
+
+// Above this many entries the explorer starts with folders collapsed.
+const EXPANDED_TREE_LIMIT = 120;
+// The server lists at most this many entries per project.
+const LISTED_ENTRIES_LIMIT = 20_000;
+const PUSH_AFTER_COMMIT_KEY = "appbuilder.pushAfterCommit";
+
+function lastOutputLine(output: string): string {
+  return (
+    output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .pop() ?? ""
+  );
+}
 
 type Tab = "code" | "agent" | "preview" | "terminal" | "git";
 type AgentDraft = {
@@ -82,6 +106,7 @@ export function Workspace({
   onBack,
   initialPrompt,
   onChange,
+  onDeleted,
   registerGuard,
 }: {
   project: Project;
@@ -91,6 +116,7 @@ export function Workspace({
   onBack: () => void;
   initialPrompt: string;
   onChange: () => void;
+  onDeleted: () => void;
   registerGuard?: (save: (() => Promise<boolean>) | null) => void;
 }) {
   // A project created from an idea opens on the agent, with the idea ready to send.
@@ -108,6 +134,9 @@ export function Workspace({
   // On phones the explorer is an overlay, so it starts closed.
   const [explorer, setExplorer] = useState(() => !isCompactScreen());
   const [rightPanel, setRightPanel] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const treeReady = useRef(false);
+  const [settings, setSettings] = useState(false);
   const [pendingFile, setPendingFile] = useState<string | null>(null);
   const [agentDraft, setAgentDraft] = useState<AgentDraft>({
     provider: "codex",
@@ -178,6 +207,7 @@ export function Workspace({
     const request = ++treeRequest.current;
     const next = await api<FileEntry[]>(`/projects/${project.id}/files`);
     if (mounted.current && request === treeRequest.current) setFiles(next);
+    return next;
   }, [project.id]);
   const read = useCallback(
     async (path: string, discard = false) => {
@@ -217,11 +247,13 @@ export function Workspace({
   useEffect(() => {
     let cancelled = false;
     void refreshFiles()
-      .then(() => {
-        if (!cancelled)
-          return read(
-            project.template === "react" ? "src/App.jsx" : "index.html",
-          );
+      .then((list) => {
+        if (cancelled) return;
+        const first = initialFile(project, list);
+        if (first) return read(first);
+        // Nothing obvious to open: show the files so the person can choose.
+        setLoading(false);
+        setExplorer(true);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -233,6 +265,23 @@ export function Workspace({
       cancelled = true;
     };
   }, [refreshFiles, read, project.template]);
+  useEffect(() => {
+    // Small projects open fully expanded; big repositories start collapsed.
+    if (treeReady.current || !files.length) return;
+    treeReady.current = true;
+    if (files.length <= EXPANDED_TREE_LIMIT)
+      setExpanded(
+        new Set(files.filter((f) => f.type === "directory").map((f) => f.path)),
+      );
+  }, [files]);
+  useEffect(() => {
+    if (!activeFile.includes("/")) return;
+    setExpanded((current) => {
+      const parents = ancestors(activeFile);
+      if (parents.every((folder) => current.has(folder))) return current;
+      return new Set([...current, ...parents]);
+    });
+  }, [activeFile]);
   useEffect(() => {
     let stopped = false;
     const refreshJobs = async () => {
@@ -351,23 +400,7 @@ export function Workspace({
       ...current.filter((item) => item.id !== job.id),
     ]);
   };
-  const extensions = useMemo(
-    () =>
-      activeFile.endsWith(".css")
-        ? [css()]
-        : activeFile.endsWith(".html")
-          ? [html()]
-          : activeFile.endsWith(".json")
-            ? [json()]
-            : [
-                javascript({
-                  jsx: true,
-                  typescript:
-                    activeFile.endsWith(".ts") || activeFile.endsWith(".tsx"),
-                }),
-              ],
-    [activeFile],
-  );
+  const extensions = useMemo(() => editorLanguage(activeFile), [activeFile]);
   const agentPanel = (
     <AgentPanel
       project={project}
@@ -390,10 +423,22 @@ export function Workspace({
       }}
     />
   );
-  const visibleFiles = files.filter(
-    (f) =>
-      !fileFilter || f.path.toLowerCase().includes(fileFilter.toLowerCase()),
-  );
+  const filter = fileFilter.trim().toLowerCase();
+  // Searching shows matches from every folder; otherwise only open folders.
+  // Names match by default; typing a "/" searches whole paths instead.
+  const treeEntries = filter
+    ? files.filter((f) =>
+        (filter.includes("/") ? f.path : f.name).toLowerCase().includes(filter),
+      )
+    : files.filter((f) => ancestors(f.path).every((dir) => expanded.has(dir)));
+  const visibleFiles = treeEntries.slice(0, 600);
+  const toggleFolder = (path: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   return (
     <main className="workspace">
       <div className="workspace-toolbar">
@@ -428,6 +473,14 @@ export function Workspace({
           </span>
         </div>
         <div>
+          <button
+            className="icon-button"
+            aria-label="Ajustes del proyecto"
+            title="Ajustes del proyecto"
+            onClick={() => setSettings(true)}
+          >
+            <Settings2 size={18} />
+          </button>
           <button
             className="button small secondary"
             aria-label="Guardar archivo"
@@ -535,36 +588,69 @@ export function Workspace({
                     <FolderOpen size={15} />
                     <strong>{project.name}</strong>
                   </div>
-                  {visibleFiles.map((f) => (
-                    <button
-                      className={`file-row ${f.type === "directory" ? "directory" : ""} ${f.path === activeFile ? "active" : ""}`}
-                      key={f.path}
-                      disabled={f.type === "directory"}
-                      style={{
-                        paddingLeft: `${4 + f.path.split("/").length * 14}px`,
-                      }}
-                      onClick={() => selectFile(f.path)}
-                    >
-                      {f.type === "directory" ? (
-                        <Folder size={15} className="folder-icon" />
-                      ) : (
-                        <FileIcon name={f.name} />
-                      )}
-                      <span>{f.name}</span>
-                      {f.path === activeFile && dirty && (
-                        <span className="unsaved-dot" />
-                      )}
-                    </button>
-                  ))}
+                  {visibleFiles.map((f) => {
+                    const folder = f.type === "directory";
+                    const open = expanded.has(f.path);
+                    const parent = f.path.slice(0, -f.name.length - 1);
+                    return (
+                      <button
+                        className={`file-row ${folder ? "directory" : ""} ${f.path === activeFile ? "active" : ""}`}
+                        key={f.path}
+                        aria-expanded={folder && !filter ? open : undefined}
+                        title={f.path}
+                        style={{
+                          paddingLeft: `${filter ? 8 : 6 + (f.path.split("/").length - 1) * 14}px`,
+                        }}
+                        onClick={() =>
+                          folder && !filter
+                            ? toggleFolder(f.path)
+                            : !folder && selectFile(f.path)
+                        }
+                      >
+                        <span className="file-twisty" aria-hidden="true">
+                          {folder && !filter && (
+                            <ChevronRight
+                              size={14}
+                              className={open ? "open" : ""}
+                            />
+                          )}
+                        </span>
+                        {folder ? (
+                          open && !filter ? (
+                            <FolderOpen size={15} className="folder-icon" />
+                          ) : (
+                            <Folder size={15} className="folder-icon" />
+                          )
+                        ) : (
+                          <FileIcon name={f.name} />
+                        )}
+                        <span className="file-name">{f.name}</span>
+                        {filter && parent && (
+                          <span className="file-parent">{parent}</span>
+                        )}
+                        {f.path === activeFile && dirty && (
+                          <span className="unsaved-dot" />
+                        )}
+                      </button>
+                    );
+                  })}
                   {!visibleFiles.length && fileFilter && (
                     <p className="file-empty">
                       Ningún archivo coincide con «{fileFilter}».
                     </p>
                   )}
+                  {treeEntries.length > visibleFiles.length && (
+                    <p className="file-empty">
+                      Se muestran {visibleFiles.length} de {treeEntries.length}.
+                      Escribe más letras para afinar la búsqueda.
+                    </p>
+                  )}
                 </div>
                 <div className="explorer-foot">
                   <Check size={13} />
-                  Archivos en tu servidor
+                  {files.length >= LISTED_ENTRIES_LIMIT
+                    ? "Se muestran los primeros 20.000 elementos"
+                    : "Archivos en tu servidor"}
                 </div>
               </aside>
               <div className="code-panel">
@@ -686,6 +772,8 @@ export function Workspace({
             revision={revision}
             notify={notify}
             onStatus={updateGitSummary}
+            syncJobs={jobs.filter((j) => j.kind === "git")}
+            onStart={onStart}
             canRestore={!dirty && !saving && !runningAgent && !agentStarting}
             beforeCommit={async () => {
               if (runningAgentRef.current || agentStarting) {
@@ -753,7 +841,218 @@ export function Workspace({
           </div>
         </Modal>
       )}
+      {settings && (
+        <ProjectSettings
+          project={project}
+          busy={jobs.some((job) => job.status === "running")}
+          onClose={() => setSettings(false)}
+          onDeleted={() => {
+            dirtyRef.current = false;
+            registerGuard?.(null);
+            onDeleted();
+          }}
+        />
+      )}
     </main>
+  );
+}
+/** README first for imported repositories; templates open their main file. */
+function initialFile(project: Project, files: FileEntry[]): string {
+  if (project.template === "react") return "src/App.jsx";
+  if (project.template === "web") return "index.html";
+  const top = files.filter((f) => f.type === "file" && !f.path.includes("/"));
+  return (
+    (
+      top.find((f) => /^readme(\.md|\.txt)?$/i.test(f.name)) ??
+      top.find((f) => /\.(md|txt|json|js|ts|cs|html|py)$/i.test(f.name)) ??
+      top[0]
+    )?.path ?? ""
+  );
+}
+function ancestors(filePath: string): string[] {
+  const parts = filePath.split("/");
+  return parts
+    .slice(0, -1)
+    .map((_, index) => parts.slice(0, index + 1).join("/"));
+}
+const cLikeExtensions = new Set([
+  "cs",
+  "java",
+  "kt",
+  "swift",
+  "dart",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "cc",
+  "go",
+  "rs",
+  "gd",
+  "shader",
+  "hlsl",
+  "cginc",
+  "compute",
+]);
+/** Syntax mode by extension. C-like languages borrow the TypeScript grammar,
+ * which colors their comments, strings and common keywords well enough. */
+function editorLanguage(file: string) {
+  const extension = file.split(".").pop()?.toLowerCase() ?? "";
+  if (["css", "scss", "less"].includes(extension)) return [css()];
+  if (["html", "htm", "vue", "svelte"].includes(extension)) return [html()];
+  if (["json", "jsonc", "asmdef", "asmref"].includes(extension))
+    return [json()];
+  if (["js", "jsx", "mjs", "cjs"].includes(extension))
+    return [javascript({ jsx: true })];
+  if (["ts", "tsx", "mts", "cts"].includes(extension))
+    return [javascript({ jsx: extension.endsWith("x"), typescript: true })];
+  if (cLikeExtensions.has(extension)) return [javascript({ typescript: true })];
+  return [];
+}
+function ProjectSettings({
+  project,
+  busy,
+  onClose,
+  onDeleted,
+}: {
+  project: Project;
+  busy: boolean;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [directory, setDirectory] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api<{ directory: string }>(`/projects/${project.id}/details`)
+      .then((details) => setDirectory(details.directory))
+      .catch(() => setDirectory(""));
+  }, [project.id]);
+  const source = project.source;
+  const sourceLink = source?.url
+    .replace(/\.git$/i, "")
+    .replace(/^git@([^:]+):/, "https://$1/");
+  return (
+    <Modal
+      title="Ajustes del proyecto"
+      subtitle={project.name}
+      onClose={onClose}
+    >
+      <dl className="project-details">
+        <div>
+          <dt>Origen</dt>
+          <dd>
+            {source ? (
+              <a
+                className="text-link"
+                href={sourceLink}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <FolderGit2 size={15} />
+                {source.url.replace(/^https:\/\//, "").replace(/\.git$/i, "")}
+              </a>
+            ) : (
+              `Creado en el estudio · plantilla ${projectKind(project)}`
+            )}
+          </dd>
+        </div>
+        {source?.branch && (
+          <div>
+            <dt>Rama importada</dt>
+            <dd>
+              <code>{source.branch}</code>
+            </dd>
+          </div>
+        )}
+        <div>
+          <dt>Carpeta en el servidor</dt>
+          <dd className="project-directory">
+            <code>{directory || "…"}</code>
+            {directory && (
+              <button
+                className="icon-button"
+                aria-label="Copiar ruta"
+                title="Copiar ruta"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(directory);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1600);
+                  } catch {
+                    /* Clipboard access can be blocked; the path stays visible. */
+                  }
+                }}
+              >
+                {copied ? <Check size={15} /> : <Copy size={15} />}
+              </button>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Creado</dt>
+          <dd>{relativeDate(project.createdAt)}</dd>
+        </div>
+      </dl>
+      <div className="danger-zone">
+        <h3>Eliminar proyecto</h3>
+        <p>
+          {source
+            ? "Se borra la copia de este servidor. Lo que ya está en el repositorio remoto no se toca, pero perderás los commits sin subir y los cambios sin guardar."
+            : "Se borran los archivos y el historial de este proyecto. No se puede deshacer."}
+        </p>
+        {busy && (
+          <p className="danger-note">
+            <Info size={15} /> Hay tareas en curso. Espera a que terminen para
+            poder eliminarlo.
+          </p>
+        )}
+        {error && (
+          <div className="inline-error" role="alert">
+            {error}
+          </div>
+        )}
+        {confirming ? (
+          <div className="danger-actions">
+            <button
+              className="button secondary"
+              disabled={deleting}
+              onClick={() => setConfirming(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              className="button danger"
+              disabled={deleting || busy}
+              onClick={async () => {
+                setDeleting(true);
+                setError("");
+                try {
+                  await api(`/projects/${project.id}`, { method: "DELETE" });
+                  onDeleted();
+                } catch (e) {
+                  setError(errorMessage(e));
+                  setDeleting(false);
+                }
+              }}
+            >
+              {deleting ? <Spinner /> : <Trash2 size={16} />} Sí, eliminar
+              definitivamente
+            </button>
+          </div>
+        ) : (
+          <button
+            className="button danger-outline"
+            disabled={busy}
+            onClick={() => setConfirming(true)}
+          >
+            <Trash2 size={16} /> Eliminar proyecto
+          </button>
+        )}
+      </div>
+    </Modal>
   );
 }
 function FileIcon({ name }: { name: string }) {
@@ -765,7 +1064,9 @@ function FileIcon({ name }: { name: string }) {
     ? "html-file"
     : ["css", "scss"].includes(extension)
       ? "css-file"
-      : "js-file";
+      : cLikeExtensions.has(extension)
+        ? "cs-file"
+        : "js-file";
   return <FileCode2 size={15} className={kind} />;
 }
 
@@ -1573,6 +1874,8 @@ function GitPanel({
   revision,
   notify,
   onStatus,
+  syncJobs,
+  onStart,
   onRestored,
   canRestore,
   beforeCommit,
@@ -1581,6 +1884,8 @@ function GitPanel({
   revision: number;
   notify: ToastFn;
   onStatus: (state: GitState) => void;
+  syncJobs: Job[];
+  onStart: (job: Job) => void;
   onRestored: () => void;
   canRestore: boolean;
   beforeCommit: () => Promise<boolean>;
@@ -1590,6 +1895,23 @@ function GitPanel({
   const [busy, setBusy] = useState(false);
   const [diff, setDiff] = useState("");
   const [selected, setSelected] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
+  const [pushAfterCommit, setPushAfterCommit] = useState(() => {
+    try {
+      return localStorage.getItem(PUSH_AFTER_COMMIT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const checked = useRef(false);
+  const lastSync = useRef<{ id: string; status: Job["status"] } | null>(null);
+  const remote = git?.remote;
+  const syncJob = syncJobs[0];
+  const syncing = syncJob?.status === "running";
+  const remoteName = /github\.com/i.test(remote?.url ?? "")
+    ? "GitHub"
+    : "el remoto";
   const refresh = useCallback(async () => {
     try {
       const state = await api<GitState>(`/projects/${project.id}/git`);
@@ -1602,6 +1924,52 @@ function GitPanel({
   useEffect(() => {
     void refresh();
   }, [refresh, revision]);
+  const checkRemote = useCallback(
+    async (quiet: boolean) => {
+      setChecking(true);
+      try {
+        const state = await post<GitState>(`/projects/${project.id}/git/fetch`);
+        setGit(state);
+        onStatus(state);
+        setRemoteError("");
+      } catch (e) {
+        setRemoteError(errorMessage(e));
+        if (!quiet) notify(errorMessage(e), "error");
+      } finally {
+        setChecking(false);
+      }
+    },
+    [project.id, notify, onStatus],
+  );
+  useEffect(() => {
+    // Look for new remote commits once when the panel opens.
+    if (!remote || checked.current) return;
+    checked.current = true;
+    void checkRemote(true);
+  }, [remote, checkRemote]);
+  useEffect(() => {
+    if (!syncJob) return;
+    const previous = lastSync.current;
+    lastSync.current = { id: syncJob.id, status: syncJob.status };
+    if (
+      previous?.id !== syncJob.id ||
+      previous.status !== "running" ||
+      syncJob.status === "running"
+    )
+      return;
+    const summary = lastOutputLine(syncJob.output);
+    if (syncJob.status === "succeeded")
+      notify(summary || "Sincronización completada.");
+    else if (syncJob.status === "failed")
+      notify(summary || "No se pudo sincronizar.", "error");
+  }, [syncJob, notify]);
+  async function sync(action: "pull" | "push") {
+    try {
+      onStart(await post<Job>(`/projects/${project.id}/git/${action}`));
+    } catch (e) {
+      notify(errorMessage(e), "error");
+    }
+  }
   const diffRequest = useRef(0);
   useEffect(
     () => () => {
@@ -1638,7 +2006,10 @@ function GitPanel({
       setSelected("");
       diffRequest.current++;
       await refresh();
-      notify("Cambios guardados en Git.");
+      if (pushAfterCommit && remote) {
+        notify(`Commit guardado. Subiendo a ${remoteName}…`);
+        await sync("push");
+      } else notify("Cambios guardados en Git.");
     } catch (e) {
       notify(errorMessage(e), "error");
     } finally {
@@ -1661,6 +2032,94 @@ function GitPanel({
             <RefreshCw size={15} />
           </button>
         </div>
+        {remote ? (
+          <section className="git-sync" aria-label="Sincronización">
+            <div className="git-sync-head">
+              <FolderGit2 size={18} />
+              <div>
+                {remote.webUrl ? (
+                  <a href={remote.webUrl} target="_blank" rel="noreferrer">
+                    {remote.label}
+                  </a>
+                ) : (
+                  <strong>{remote.label}</strong>
+                )}
+                <small>
+                  Rama <code>{git?.branch}</code>
+                  {!remote.upstream && " · aún no está en el remoto"}
+                </small>
+              </div>
+              <button
+                className="icon-button"
+                aria-label={`Comprobar ${remoteName}`}
+                title={`Buscar cambios nuevos en ${remoteName}`}
+                disabled={checking || syncing}
+                onClick={() => void checkRemote(false)}
+              >
+                {checking ? <Spinner /> : <RefreshCw size={15} />}
+              </button>
+            </div>
+            <div className="git-sync-counts">
+              <span
+                className={remote.ahead ? "pending" : ""}
+                title={`Commits de esta copia que aún no están en ${remoteName}`}
+              >
+                <CloudUpload size={15} />
+                {remote.ahead} por subir
+              </span>
+              <span
+                className={remote.behind ? "pending" : ""}
+                title={`Commits de ${remoteName} que aún no tienes`}
+              >
+                <CloudDownload size={15} />
+                {remote.behind} por traer
+              </span>
+            </div>
+            <div className="git-sync-actions">
+              <button
+                className={`button small ${remote.behind ? "primary" : "secondary"}`}
+                disabled={syncing || busy}
+                onClick={() => void sync("pull")}
+              >
+                <CloudDownload size={15} /> Traer cambios
+              </button>
+              <button
+                className={`button small ${remote.ahead || !remote.upstream ? "primary" : "secondary"}`}
+                disabled={syncing || busy}
+                onClick={() => void sync("push")}
+              >
+                <CloudUpload size={15} /> Subir a {remoteName}
+              </button>
+            </div>
+            {syncing && (
+              <p className="git-sync-status">
+                <Spinner /> {syncJob.title}…
+              </p>
+            )}
+            {!syncing && syncJob?.status === "failed" && (
+              <details className="git-sync-log">
+                <summary>La última sincronización falló · ver detalles</summary>
+                <pre>
+                  {syncJob.output.trim().split("\n").slice(-14).join("\n")}
+                </pre>
+              </details>
+            )}
+            {remoteError && !syncing && (
+              <p className="git-sync-warning">{remoteError}</p>
+            )}
+          </section>
+        ) : (
+          git && (
+            <div className="git-sync empty">
+              <Info size={16} />
+              <p>
+                Este proyecto solo está en tu servidor. Para sincronizarlo con
+                GitHub, impórtalo desde allí o añade un remoto en la terminal
+                con <code>git remote add origin URL</code>.
+              </p>
+            </div>
+          )
+        )}
         <form className="git-commit-form" onSubmit={commit}>
           <textarea
             aria-label="Mensaje del commit"
@@ -1676,6 +2135,26 @@ function GitPanel({
           >
             {busy ? <Spinner /> : <Check size={16} />}Guardar commit
           </button>
+          {remote && (
+            <label className="checkbox-row compact">
+              <input
+                type="checkbox"
+                checked={pushAfterCommit}
+                onChange={(e) => {
+                  setPushAfterCommit(e.target.checked);
+                  try {
+                    localStorage.setItem(
+                      PUSH_AFTER_COMMIT_KEY,
+                      e.target.checked ? "1" : "0",
+                    );
+                  } catch {
+                    /* The preference is optional. */
+                  }
+                }}
+              />
+              <span>Subir a {remoteName} al guardar el commit</span>
+            </label>
+          )}
           <small>
             Un commit guarda una versión de tu proyecto a la que podrás volver.
           </small>

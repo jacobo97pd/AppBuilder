@@ -15,6 +15,7 @@ import {
   CircleHelp,
   Clock3,
   Folder,
+  FolderGit2,
   Layers3,
   LayoutDashboard,
   LayoutGrid,
@@ -37,6 +38,8 @@ import {
   Logo,
   Modal,
   ProjectIcon,
+  projectKind,
+  projectStack,
   relativeDate,
   Spinner,
   StatusDot,
@@ -48,6 +51,9 @@ const Workspace = lazy(() =>
 );
 import { Connections } from "./Connections";
 import { Builds } from "./Builds";
+import { GithubImport } from "./ImportProject";
+
+type NewProjectMode = "template" | "github";
 
 type Page = "studio" | "projects" | "builds" | "connections";
 const pages = [
@@ -92,6 +98,7 @@ export function App() {
   const [newProject, setNewProject] = useState<{
     prompt: string;
     name: string;
+    mode: NewProjectMode;
   } | null>(null);
   const [menu, setMenu] = useState(false);
   const [search, setSearch] = useState(false);
@@ -188,15 +195,26 @@ export function App() {
       setSearch(false);
     });
   }
-  function startProject(prompt = "", name = "") {
+  function startProject(
+    prompt = "",
+    name = "",
+    mode: NewProjectMode = "template",
+  ) {
     setMenu(false);
-    setNewProject({ prompt, name });
+    setNewProject({ prompt, name, mode });
   }
+  const importProject = () => startProject("", "", "github");
   async function created(next: Project, prompt: string) {
     setNewProject(null);
     await refresh();
     openProject(next, prompt);
     notify("Proyecto creado. Tu espacio está listo.");
+  }
+  async function imported(next: Project) {
+    setNewProject(null);
+    await refresh();
+    openProject(next);
+    notify("Proyecto importado. Ya puedes trabajar en él.");
   }
   if (session === "loading")
     return (
@@ -242,6 +260,14 @@ export function App() {
         >
           <Plus size={18} strokeWidth={2.2} />
           <span>Nuevo proyecto</span>
+        </button>
+        <button
+          className="sidebar-import"
+          onClick={importProject}
+          title="Importar de GitHub"
+        >
+          <FolderGit2 size={17} />
+          <span>Importar de GitHub</span>
         </button>
         <nav className="sidebar-nav" aria-label="Principal">
           {pages.map((item) => {
@@ -339,8 +365,16 @@ export function App() {
                 </button>
                 <ChevronRight size={15} className="breadcrumb-separator" />
                 <strong>{project.name}</strong>
-                <Tag tone={project.template === "react" ? "info" : "accent"}>
-                  {project.template === "react" ? "React" : "Web"}
+                <Tag
+                  tone={
+                    project.template === "react"
+                      ? "info"
+                      : project.template === "repo"
+                        ? ""
+                        : "accent"
+                  }
+                >
+                  {projectKind(project)}
                 </Tag>
               </>
             ) : (
@@ -387,6 +421,13 @@ export function App() {
               onChange={() => {
                 void refresh().catch(() => {});
               }}
+              onDeleted={() => {
+                navigationGuard.current = null;
+                setProject(null);
+                setPage("projects");
+                void refresh().catch((e) => notify(errorMessage(e), "error"));
+                notify("Proyecto eliminado de tu estudio.");
+              }}
               registerGuard={registerGuard}
             />
           </Suspense>
@@ -395,6 +436,7 @@ export function App() {
             connections={connections}
             refresh={refresh}
             notify={notify}
+            onImport={importProject}
           />
         ) : page === "builds" ? (
           <Builds
@@ -410,6 +452,7 @@ export function App() {
             allProjects={page === "projects"}
             onOpen={(p) => openProject(p)}
             onNew={startProject}
+            onImport={importProject}
             onConnections={() => navigate("connections")}
             onBuilds={() => navigate("builds")}
             onProjects={() => navigate("projects")}
@@ -445,10 +488,17 @@ export function App() {
         <NewProjectModal
           initialPrompt={newProject.prompt}
           initialName={newProject.name}
+          initialMode={newProject.mode}
+          connections={connections}
           onClose={() => setNewProject(null)}
           onCreated={(next, description) =>
             created(next, newProject.prompt ? description.trim() : "")
           }
+          onImported={imported}
+          onConnections={() => {
+            setNewProject(null);
+            navigate("connections");
+          }}
         />
       )}
       {search && (
@@ -511,7 +561,7 @@ export function App() {
               {
                 icon: Folder,
                 title: "Empieza con un proyecto",
-                text: "Abre Orbit Notes o crea una app Web o React. Tus archivos se guardan en tu servidor.",
+                text: "Crea una app Web o React, o importa un repositorio de GitHub para seguir trabajando en él. Tus archivos se guardan en tu servidor.",
                 action: "Crear proyecto",
                 run: () => startProject(),
               },
@@ -615,6 +665,7 @@ function Dashboard({
   allProjects,
   onOpen,
   onNew,
+  onImport,
   onConnections,
   onBuilds,
   onProjects,
@@ -624,6 +675,7 @@ function Dashboard({
   allProjects: boolean;
   onOpen: (project: Project) => void;
   onNew: (prompt?: string, name?: string) => void;
+  onImport: () => void;
   onConnections: () => void;
   onBuilds: () => void;
   onProjects: () => void;
@@ -648,7 +700,7 @@ function Dashboard({
       title: "Crea un proyecto",
       text: projects.length
         ? `${projects.length} ${projects.length === 1 ? "proyecto" : "proyectos"} en tu espacio`
-        : "Empieza con una idea o una plantilla.",
+        : "Empieza con una idea, una plantilla o tu repositorio de GitHub.",
       action: projects.length ? "Ver proyectos" : "Crear proyecto",
       run: projects.length ? onProjects : () => onNew(),
     },
@@ -807,9 +859,14 @@ function Dashboard({
             </h1>
             <p>Un espacio para cada idea. Retoma donde lo dejaste.</p>
           </div>
-          <button className="button primary" onClick={() => onNew()}>
-            <Plus size={17} /> Nuevo proyecto
-          </button>
+          <div className="section-page-actions">
+            <button className="button secondary" onClick={onImport}>
+              <FolderGit2 size={17} /> Importar de GitHub
+            </button>
+            <button className="button primary" onClick={() => onNew()}>
+              <Plus size={17} /> Nuevo proyecto
+            </button>
+          </div>
         </div>
       )}
       <section className="projects-section">
@@ -836,7 +893,15 @@ function Dashboard({
           ) : (
             <div className="section-actions">
               <button
-                className="button ghost new-project-button"
+                className="button ghost compact-button"
+                title="Importar de GitHub"
+                onClick={onImport}
+              >
+                <FolderGit2 size={17} />
+                <span>Importar de GitHub</span>
+              </button>
+              <button
+                className="button ghost new-project-button compact-button"
                 title="Nuevo proyecto"
                 onClick={() => onNew()}
               >
@@ -873,16 +938,19 @@ function Dashboard({
                     </div>
                   </div>
                 </div>
-                <span className="art-badge">
-                  {p.template === "react" ? "React + Vite" : "HTML · CSS · JS"}
-                </span>
+                <span className="art-badge">{projectStack(p)}</span>
               </div>
               <div className="project-card-body">
                 <div className="project-card-top">
                   <ProjectIcon template={p.template} />
                   <div>
                     <h3>{p.name}</h3>
-                    <p>{p.description || "Una nueva idea en construcción."}</p>
+                    <p>
+                      {p.description ||
+                        (p.template === "repo"
+                          ? `Importado de ${projectKind(p)}`
+                          : "Una nueva idea en construcción.")}
+                    </p>
                   </div>
                 </div>
                 <div className="project-card-bottom">
@@ -930,12 +998,82 @@ function Code2Art() {
 function NewProjectModal({
   initialPrompt,
   initialName,
+  initialMode,
+  connections,
   onClose,
+  onCreated,
+  onImported,
+  onConnections,
+}: {
+  initialPrompt: string;
+  initialName: string;
+  initialMode: NewProjectMode;
+  connections: Connection[];
+  onClose: () => void;
+  onCreated: (project: Project, description: string) => Promise<void>;
+  onImported: (project: Project) => Promise<void>;
+  onConnections: () => void;
+}) {
+  const [mode, setMode] = useState<NewProjectMode>(initialMode);
+  return (
+    <Modal
+      title={
+        mode === "github"
+          ? "Trae tu proyecto de GitHub"
+          : "Dale espacio a tu idea"
+      }
+      subtitle={
+        mode === "github"
+          ? "Se clona en tu servidor y trabajas en él con el editor, la terminal y el agente. Después subes los cambios a GitHub."
+          : "Ponle nombre y elige un punto de partida. Podrás cambiarlo todo después."
+      }
+      onClose={onClose}
+    >
+      <div
+        className="mode-switch"
+        role="tablist"
+        aria-label="Origen del proyecto"
+      >
+        <button
+          role="tab"
+          aria-selected={mode === "template"}
+          className={mode === "template" ? "active" : ""}
+          onClick={() => setMode("template")}
+        >
+          <Sparkles size={16} /> Desde una plantilla
+        </button>
+        <button
+          role="tab"
+          aria-selected={mode === "github"}
+          className={mode === "github" ? "active" : ""}
+          onClick={() => setMode("github")}
+        >
+          <FolderGit2 size={16} /> Desde GitHub
+        </button>
+      </div>
+      {mode === "github" ? (
+        <GithubImport
+          connections={connections}
+          onImported={onImported}
+          onConnections={onConnections}
+        />
+      ) : (
+        <TemplateProjectForm
+          initialPrompt={initialPrompt}
+          initialName={initialName}
+          onCreated={onCreated}
+        />
+      )}
+    </Modal>
+  );
+}
+function TemplateProjectForm({
+  initialPrompt,
+  initialName,
   onCreated,
 }: {
   initialPrompt: string;
   initialName: string;
-  onClose: () => void;
   onCreated: (project: Project, description: string) => Promise<void>;
 }) {
   const [name, setName] = useState(initialName);
@@ -962,79 +1100,73 @@ function NewProjectModal({
     }
   }
   return (
-    <Modal
-      title="Dale espacio a tu idea"
-      subtitle="Ponle nombre y elige un punto de partida. Podrás cambiarlo todo después."
-      onClose={onClose}
-    >
-      <form onSubmit={submit} className="stack-form">
-        <label>
-          Nombre del proyecto
-          <input
-            autoComplete="off"
-            maxLength={80}
-            required
-            placeholder="Mi próxima app"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label>
-          ¿Qué quieres construir?
-          <textarea
-            rows={3}
-            placeholder="Una breve descripción de tu idea…"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          {initialPrompt && (
-            <small className="field-hint">
-              Tu agente recibirá esta descripción como primer encargo.
-            </small>
-          )}
-        </label>
-        <div className="field-group">
-          <span className="field-label">Punto de partida</span>
-          <div className="template-options">
-            {(["web", "react"] as const).map((t) => (
-              <button
-                type="button"
-                className={`template-option ${template === t ? "selected" : ""}`}
-                aria-pressed={template === t}
-                key={t}
-                onClick={() => setTemplate(t)}
-              >
-                <ProjectIcon template={t} />
-                <strong>{t === "web" ? "Web esencial" : "React + Vite"}</strong>
-                <small>
-                  {t === "web"
-                    ? "HTML, CSS y JavaScript"
-                    : "Componentes, JSX y estilos"}
-                </small>
-                {template === t && (
-                  <span className="template-check">
-                    <Check size={13} strokeWidth={3} />
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-        {error && (
-          <div className="inline-error" role="alert">
-            {error}
-          </div>
+    <form onSubmit={submit} className="stack-form">
+      <label>
+        Nombre del proyecto
+        <input
+          autoComplete="off"
+          maxLength={80}
+          required
+          placeholder="Mi próxima app"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
+      <label>
+        ¿Qué quieres construir?
+        <textarea
+          rows={3}
+          placeholder="Una breve descripción de tu idea…"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+        {initialPrompt && (
+          <small className="field-hint">
+            Tu agente recibirá esta descripción como primer encargo.
+          </small>
         )}
-        <div className="form-footer">
-          <span>
-            <ShieldCheck size={15} /> Tu código permanece en tu servidor.
-          </span>
-          <button className="button primary" disabled={busy || !name.trim()}>
-            {busy ? <Spinner /> : <Plus size={17} />} Crear proyecto
-          </button>
+      </label>
+      <div className="field-group">
+        <span className="field-label">Punto de partida</span>
+        <div className="template-options">
+          {(["web", "react"] as const).map((t) => (
+            <button
+              type="button"
+              className={`template-option ${template === t ? "selected" : ""}`}
+              aria-pressed={template === t}
+              key={t}
+              onClick={() => setTemplate(t)}
+            >
+              <ProjectIcon template={t} />
+              <strong>{t === "web" ? "Web esencial" : "React + Vite"}</strong>
+              <small>
+                {t === "web"
+                  ? "HTML, CSS y JavaScript"
+                  : "Componentes, JSX y estilos"}
+              </small>
+              {template === t && (
+                <span className="template-check">
+                  <Check size={13} strokeWidth={3} />
+                </span>
+              )}
+            </button>
+          ))}
         </div>
-      </form>
-    </Modal>
+      </div>
+      {error && (
+        <div className="inline-error" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="form-footer">
+        <span>
+          <ShieldCheck size={15} /> Tu código permanece en tu servidor.
+        </span>
+        <button className="button primary" disabled={busy || !name.trim()}>
+          {busy ? <Spinner /> : <Plus size={17} />} Crear proyecto
+        </button>
+      </div>
+    </form>
   );
 }
 function SearchModal({

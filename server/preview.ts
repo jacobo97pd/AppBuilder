@@ -43,7 +43,20 @@ export async function renderPreview(
   const root = projectDir(projectId);
   const realRoot = fs.realpathSync(root);
   const libraryRoot = fs.realpathSync(path.resolve("node_modules"));
-  let html = readFile(projectId, "index.html").content;
+  let html: string;
+  try {
+    html = readFile(projectId, "index.html").content;
+  } catch (error) {
+    if (
+      project.template === "repo" &&
+      (error as { status?: number }).status === 404
+    )
+      throw httpError(
+        404,
+        "Este repositorio no tiene un index.html en la raíz, así que no hay vista previa web. Puedes trabajar con el código, la terminal y el agente.",
+      );
+    throw error;
+  }
   if (project.template === "react") {
     const result = await build({
       absWorkingDir: root,
