@@ -22,6 +22,8 @@ export interface Job {
   createdAt: string;
   finishedAt?: string;
   exitCode?: number;
+  /** Files attached to an agent request, shown with the message. */
+  attachments?: { name: string; path: string; type: string; size: number }[];
 }
 
 const jobsPath = path.join(dataRoot, "jobs.json");
@@ -130,6 +132,7 @@ export function createJob(
   projectId: string,
   kind: Job["kind"],
   title: string,
+  extra: Pick<Job, "attachments"> = {},
 ): Job {
   if (shuttingDown)
     throw httpError(
@@ -151,6 +154,7 @@ export function createJob(
     status: "running",
     output: "",
     createdAt: new Date().toISOString(),
+    ...(extra.attachments?.length ? { attachments: extra.attachments } : {}),
   };
   jobs.set(job.id, job);
   const finished = [...jobs.values()]

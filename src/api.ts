@@ -76,6 +76,40 @@ export async function api<T>(
 }
 export const post = <T>(path: string, body?: unknown) =>
   api<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+/** Sends a file as-is; its name travels in the address to keep accents. */
+export const upload = <T>(path: string, file: Blob, name: string) =>
+  api<T>(`${path}?name=${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+const fileUrls = new Map<string, Promise<string>>();
+/** Reuses a local copy (such as a just-uploaded photo) instead of downloading it. */
+export function rememberFileUrl(path: string, url: string) {
+  fileUrls.set(path, Promise.resolve(url));
+}
+/**
+ * A local address for a file behind the API. Native apps authenticate with a
+ * header, which images cannot send, so the file is fetched once and kept.
+ */
+export function protectedFileUrl(path: string): Promise<string> {
+  let url = fileUrls.get(path);
+  if (!url) {
+    url = (async () => {
+      const token = isNative ? storedToken() : null;
+      const response = await fetch(`${serverUrl()}/api${path}`, {
+        credentials: isNative ? "omit" : "same-origin",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok)
+        throw new ApiError("No se pudo abrir el archivo.", response.status);
+      return URL.createObjectURL(await response.blob());
+    })();
+    url.catch(() => fileUrls.delete(path));
+    fileUrls.set(path, url);
+  }
+  return url;
+}
 export function errorMessage(error: unknown) {
   return error instanceof Error
     ? error.message

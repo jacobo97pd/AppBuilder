@@ -1,4 +1,5 @@
-export type ProjectTemplate = "web" | "react";
+/** Flutter apps come from `flutter create` in a job, not from files here. */
+export type ProjectTemplate = "web" | "react" | "flutter";
 
 const html = `<!doctype html>
 <html lang="es">

@@ -501,3 +501,88 @@ test("the explorer folds folders and search reaches every file", async ({
   ).toBeVisible();
   await noPageOverflow(page);
 });
+
+test("attachments travel with the agent message and survive a reload", async ({
+  page,
+}) => {
+  await openStudio(page);
+  await page
+    .locator(".project-card")
+    .filter({
+      has: page.getByRole("heading", { name: "Orbit Notes", exact: true }),
+    })
+    .click();
+  await tab(page, "Agente").click();
+  // A 1×1 PNG and a log file, as a screenshot and an error report would be.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page
+    .locator('input.file-picker[accept="image/*"]')
+    .setInputFiles({ name: "captura.png", mimeType: "image/png", buffer: png });
+  await page.locator("input.file-picker:not([accept])").setInputFiles({
+    name: "error.log",
+    mimeType: "text/plain",
+    buffer: Buffer.from("TypeError: x is undefined"),
+  });
+  const chips = page.locator(".attachment-chip:not(.uploading)");
+  await expect(chips).toHaveCount(2);
+  await expect(chips.first().locator("img")).toBeVisible();
+  await expect(page.getByLabel("Mensaje al agente")).toHaveAttribute(
+    "placeholder",
+    /adjuntos/,
+  );
+  await noPageOverflow(page);
+  // Phones close apps in the background; the draft keeps its files.
+  await page.reload();
+  await expect(chips).toHaveCount(2);
+  await page.getByRole("button", { name: "Quitar error.log" }).click();
+  await expect(chips).toHaveCount(1);
+  const projects = (await (
+    await page.request.get("/api/projects")
+  ).json()) as Project[];
+  const project = projects.find((item) => item.name === "Orbit Notes")!;
+  const files = (await (
+    await page.request.get(`/api/projects/${project.id}/files`)
+  ).json()) as { path: string }[];
+  expect(files.some((file) => file.path.startsWith(".appbuilder"))).toBe(false);
+  const git = (await (
+    await page.request.get(`/api/projects/${project.id}/git`)
+  ).json()) as { changes: { path: string }[] };
+  expect(
+    git.changes.some((change) => change.path.includes(".appbuilder")),
+  ).toBe(false);
+});
+
+test("Flutter apps start from the new-project form with their bundle ID", async ({
+  page,
+}) => {
+  await openStudio(page);
+  await page
+    .locator("main")
+    .getByRole("button", { name: "Nuevo proyecto", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Nombre del proyecto").fill("Mi Tienda 2");
+  const flutter = dialog.getByRole("button", { name: /App Flutter/ });
+  await flutter.click();
+  await expect(flutter).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByLabel("Organización").fill("Com.Ejemplo");
+  await expect(
+    dialog.getByText("Bundle ID: com.ejemplo.mi_tienda_2", { exact: false }),
+  ).toBeVisible();
+  await noPageOverflow(page);
+  // The server rejects a malformed organization before creating anything.
+  await dialog.getByLabel("Organización").fill("ejemplo");
+  await dialog
+    .getByRole("button", { name: "Crear proyecto", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText("com.tuempresa");
+  const projects = (await (
+    await page.request.get("/api/projects")
+  ).json()) as Project[];
+  expect(projects.some((project) => project.name === "Mi Tienda 2")).toBe(
+    false,
+  );
+});

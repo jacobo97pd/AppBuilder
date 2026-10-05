@@ -7,6 +7,7 @@ import {
   FolderGit2,
   Globe2,
   LoaderCircle,
+  Smartphone,
   X,
 } from "lucide-react";
 import type { Project } from "./types";
@@ -140,6 +141,8 @@ export function ProjectIcon({
         <Atom size={size} />
       ) : template === "repo" ? (
         <FolderGit2 size={size} />
+      ) : template === "flutter" ? (
+        <Smartphone size={size} />
       ) : (
         <Globe2 size={size} />
       )}
@@ -150,6 +153,7 @@ export function ProjectIcon({
 export function projectKind(project: Project): string {
   if (project.template === "repo")
     return /github\.com/i.test(project.source?.url ?? "") ? "GitHub" : "Git";
+  if (project.template === "flutter") return "Flutter";
   return project.template === "react" ? "React" : "Web";
 }
 /** owner/repo for imported projects, otherwise the template stack. */
@@ -162,6 +166,8 @@ export function projectStack(project: Project): string {
         .slice(-2)
         .join("/") || "Repositorio Git"
     );
+  if (project.template === "flutter")
+    return `Flutter · ${project.organization ?? "com.example"}`;
   return project.template === "react" ? "React + Vite" : "HTML · CSS · JS";
 }
 export function StatusDot({ active }: { active?: boolean }) {

@@ -97,6 +97,7 @@ const starters = [
 ];
 const RECENT_PROJECTS = 5;
 const LAST_PROJECT_KEY = "appbuilder.lastProject";
+const ORGANIZATION_KEY = "appbuilder.flutterOrganization";
 const agentNames: Record<string, string> = { codex: "Codex", claude: "Claude" };
 
 export function App() {
@@ -1131,22 +1132,35 @@ function TemplateProjectForm({
 }) {
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialPrompt);
-  const [template, setTemplate] = useState<"web" | "react">("web");
+  const [template, setTemplate] = useState<"web" | "react" | "flutter">("web");
+  // The organization forms the bundle ID; most people reuse theirs.
+  const [organization, setOrganization] = useState(
+    () => readStored(ORGANIZATION_KEY) || "",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const packageName =
+    name
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "app";
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      await onCreated(
-        await post<Project>("/projects", {
-          name: name.trim(),
-          description,
-          template,
-        }),
+      const flutter = template === "flutter";
+      const project = await post<Project>("/projects", {
+        name: name.trim(),
         description,
-      );
+        template,
+        organization: flutter ? organization.trim() || undefined : undefined,
+      });
+      if (flutter && organization.trim())
+        writeStored(ORGANIZATION_KEY, organization.trim());
+      await onCreated(project, description);
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
@@ -1182,7 +1196,7 @@ function TemplateProjectForm({
       <div className="field-group">
         <span className="field-label">Punto de partida</span>
         <div className="template-options">
-          {(["web", "react"] as const).map((t) => (
+          {(["web", "react", "flutter"] as const).map((t) => (
             <button
               type="button"
               className={`template-option ${template === t ? "selected" : ""}`}
@@ -1191,11 +1205,19 @@ function TemplateProjectForm({
               onClick={() => setTemplate(t)}
             >
               <ProjectIcon template={t} />
-              <strong>{t === "web" ? "Web esencial" : "React + Vite"}</strong>
+              <strong>
+                {t === "web"
+                  ? "Web esencial"
+                  : t === "react"
+                    ? "React + Vite"
+                    : "App Flutter"}
+              </strong>
               <small>
                 {t === "web"
                   ? "HTML, CSS y JavaScript"
-                  : "Componentes, JSX y estilos"}
+                  : t === "react"
+                    ? "Componentes, JSX y estilos"
+                    : "iOS, Android y vista previa"}
               </small>
               {template === t && (
                 <span className="template-check">
@@ -1206,6 +1228,25 @@ function TemplateProjectForm({
           ))}
         </div>
       </div>
+      {template === "flutter" && (
+        <label>
+          Organización
+          <input
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            maxLength={100}
+            placeholder="com.tuempresa"
+            value={organization}
+            onChange={(e) => setOrganization(e.target.value)}
+          />
+          <small className="field-hint">
+            Bundle ID: {organization.trim().toLowerCase() || "com.example"}.
+            {packageName}. Usa tu propio dominio al revés: el de las tiendas no
+            se puede cambiar después.
+          </small>
+        </label>
+      )}
       {error && (
         <div className="inline-error" role="alert">
           {error}

@@ -488,6 +488,10 @@ kbd {
   background: var(--sky-soft);
   color: var(--sky);
 }
+.project-icon.flutter {
+  background: var(--info-soft);
+  color: var(--info-strong);
+}
 .project-icon.large {
   width: 44px;
   height: 44px;
@@ -2204,7 +2208,7 @@ kbd {
 }
 .template-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .template-option {
@@ -3797,6 +3801,169 @@ kbd {
   justify-content: space-between;
   gap: 10px;
   margin-top: 4px;
+}
+.agent-prompt.dragging {
+  border-color: var(--brand);
+  border-style: dashed;
+  background: var(--brand-soft);
+}
+.agent-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.attach-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  color: var(--muted);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.attach-button:hover {
+  background: var(--surface-3);
+  color: var(--brand-strong);
+}
+.agent-tools .agent-context {
+  margin-left: 6px;
+}
+/* Visually hidden but still clickable from code on iOS. */
+.file-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.prompt-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  padding: 4px 4px 4px 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.attachment-chip > img,
+.attachment-chip > .attachment-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.attachment-chip > span:not(.attachment-icon) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.attachment-chip strong {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+.attachment-chip small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.attachment-chip > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  color: var(--muted);
+}
+.attachment-chip > button:hover {
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+}
+.attachment-chip.uploading {
+  padding-right: 10px;
+  opacity: 0.75;
+}
+.attachment-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+.attachment-icon.loading {
+  background: var(--surface-3);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 8px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+.message-image {
+  display: block;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border: 1px solid var(--brand-soft-2);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.message-image img,
+.message-image .attachment-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.message-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 200px;
+  padding: 5px 9px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.attachment-full {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  border-radius: 12px;
+  object-fit: contain;
 }
 .agent-context {
   display: inline-flex;
@@ -5487,6 +5654,27 @@ kbd {
   }
 }
 @media (max-width: 700px) {
+  .template-options {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .template-option {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 12px;
+    align-items: center;
+    padding: 12px 44px 12px 12px;
+  }
+  .template-option .project-icon {
+    grid-row: span 2;
+  }
+  .template-option strong {
+    margin-top: 0;
+  }
+  .template-check {
+    top: 50%;
+    transform: translateY(-50%);
+  }
   .ios-card {
     flex-wrap: wrap;
   }
@@ -5565,6 +5753,61 @@ kbd {
   gap: 12px;
   width: 100%;
   max-width: 560px;
+}
+.flutter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.flutter-screen {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.flutter-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: rgba(20, 18, 46, 0.86);
+  text-align: center;
+  color: #fff;
+}
+.flutter-overlay strong {
+  font-size: 16px;
+}
+.flutter-overlay p {
+  max-width: 300px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d9d6f3;
+  overflow-wrap: anywhere;
+}
+.flutter-overlay > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.flutter-overlay > svg {
+  color: #ffb4b8;
+}
+/* While Flutter starts: a hint that does not hide its own splash screen. */
+.flutter-overlay.subtle {
+  inset: auto 12px 14px;
+  flex-direction: row;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(20, 18, 46, 0.78);
+  font-size: 12.5px;
+  pointer-events: none;
 }
 .flutter-mark {
   color: #1689d8;

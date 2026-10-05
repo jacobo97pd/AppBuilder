@@ -14,6 +14,7 @@ import { createRepositoriesRouter } from "./repositories.js";
 import { createFlutterRouter, serveFlutterPreview } from "./flutter.js";
 import { createFirebaseRouter } from "./firebase.js";
 import { createAppleRouter } from "./apple.js";
+import { createAttachmentsRouter } from "./attachments.js";
 import { APP_VERSION } from "../version.js";
 
 const nativeOrigins = new Set([
@@ -216,6 +217,7 @@ export function createApp(
   app.use("/api", createFlutterRouter());
   app.use("/api", createFirebaseRouter());
   app.use("/api", createAppleRouter());
+  app.use("/api", createAttachmentsRouter());
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Esta operación no existe." });
   });

@@ -3,8 +3,10 @@ export type Project = {
   name: string;
   description: string;
   /** "repo" marks a project imported from an existing Git repository. */
-  template: "web" | "react" | "repo";
+  template: "web" | "react" | "flutter" | "repo";
   source?: { url: string; branch?: string };
+  /** Reverse-domain organization of a new Flutter app. */
+  organization?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -35,6 +37,14 @@ export type Job = {
   createdAt: string;
   finishedAt?: string;
   exitCode?: number;
+  attachments?: Attachment[];
+};
+/** A file attached to an agent message, stored inside the project. */
+export type Attachment = {
+  name: string;
+  path: string;
+  type: string;
+  size: number;
 };
 export type Connection = {
   id: string;

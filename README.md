@@ -2,7 +2,7 @@
 
 **Versión 0.1.5**
 
-Entorno personal de desarrollo diseñado para móvil, tablet y escritorio. Interfaz en español, proyectos reales en disco, editor CodeMirror, agentes Codex/Claude, terminal, vista previa web y de Flutter, explorador de Firestore, asistente de publicación iOS y conexión a Codemagic.
+Entorno personal de desarrollo diseñado para móvil, tablet y escritorio. Interfaz en español, proyectos reales en disco, editor CodeMirror, agentes Codex/Claude con imágenes y archivos adjuntos, terminal, vista previa web y de Flutter, explorador de Firestore, asistente de publicación iOS y conexión a Codemagic.
 
 ## Ejecutar
 
@@ -22,6 +22,7 @@ Abre **http://127.0.0.1:4310**. Se crea automáticamente un proyecto editable, *
 - Explorar, crear, editar y guardar archivos con autocompletado. Protección de cambios sin guardar y conflictos con el archivo del servidor.
 - Terminal por comandos con stdout/stderr real, historial persistente, cancelación de procesos secundarios, cuatro tareas simultáneas y límite de duración. **No es un PTY interactivo**: usa comandos no interactivos o encadena operaciones en un mismo comando; `cd` no persiste entre trabajos.
 - Vista previa del HTML o React guardado, recompilación y consola. El iframe tiene origen aislado y no comparte credenciales ni almacenamiento con el editor. Las plantillas usan memoria cuando el navegador restringe localStorage; el estado de la app de ejemplo puede reiniciarse al actualizar la preview.
+- Adjuntos para el agente: añade capturas, fotos o archivos (registros, PDF, JSON…) con los botones del mensaje, pegando una captura o arrastrándolos. Se guardan dentro del proyecto, en `.appbuilder/attachments` (oculto en el explorador, excluido de Git y borrado a los 14 días), hasta 10 por mensaje y 20 MB cada uno; las fotos grandes se reducen y las HEIC del iPhone pasan a JPEG. Codex recibe las imágenes directamente y Claude las abre con su herramienta de lectura.
 - Tareas en segundo plano: el agente, la terminal y las compilaciones se ejecutan en el servidor, así que siguen aunque cierres la app o el móvil bloquee la pantalla. Al volver, el estudio recupera el proyecto, la pestaña, el borrador del mensaje y el modelo y esfuerzo elegidos para cada agente, y actualiza el estado de las tareas. Cada tarea del agente admite hasta 200 pasos y 60 minutos; si llega al límite, lo hecho queda guardado y basta con pedirle que continúe.
 - Git: estado, diferencias por archivo, commits, restauración de archivos y checkpoint automático antes de tareas de IA. En proyectos importados: traer cambios (solo avance rápido), subir la rama actual y ver los commits pendientes en cada sentido.
 - Integraciones reales mediante la cuenta ChatGPT iniciada en Codex o las claves que añadas en **Conexiones**. Nunca se simulan respuestas de proveedores.
@@ -54,7 +55,16 @@ Solo se importan direcciones HTTPS. El explorador muestra hasta 20.000 elementos
 
 ## Apps de Flutter
 
-Los proyectos con un `pubspec.yaml` que depende de Flutter muestran en **Vista previa** un teléfono con la app compilada para web. Pulsa **Compilar vista previa**: el servidor ejecuta `flutter build web` como una tarea que puedes seguir y cancelar, y la sirve en un origen aislado sin acceso al estudio. Si el proyecto no tiene la carpeta `web/`, la primera compilación la crea con `flutter create --platforms=web .` (solo añade `web/` y actualiza `.metadata`; aparecerá en Cambios). Hace falta el SDK de Flutter en el PATH del usuario que ejecuta el servidor. Es la versión web: los plugins que solo existen en Android o iOS no funcionan en ella.
+Crea una app nueva con **Nuevo proyecto → App Flutter**: indica tu organización (por ejemplo `com.tuempresa`; el Bundle ID será `com.tuempresa.nombre_app`) y AppBuilder ejecuta `flutter create` para iOS, Android y web, guarda el primer commit y compila la vista previa. También puedes importar tus apps de GitHub.
+
+La pestaña **Vista previa** detecta la app de Flutter en cualquier proyecto, en su raíz o en una subcarpeta (hasta dos niveles), y muestra un teléfono con la app compilada para web:
+
+- Pulsa **Compilar vista previa**: el servidor ejecuta `flutter build web` en modo profile, que conserva los nombres para que los errores se entiendan, como una tarea que puedes seguir y cancelar. Si la app no tiene carpeta `web/`, se genera aparte y solo se copia `web/` al proyecto (aparecerá en Cambios).
+- La app se sirve en un origen aislado, sin acceso al estudio, y comprimida con Brotli para que cargue rápido en el móvil. El almacenamiento del navegador (`shared_preferences`, la sesión de Firebase Auth…) funciona en memoria mientras la vista previa está abierta.
+- Mientras arranca se indica en la pantalla; si no llega a arrancar, verás el error real y el botón **Pedir al agente que lo arregle**, que le pasa el error (o el registro de una compilación fallida) para que adapte el código a la web sin romper iOS ni Android.
+- El botón de abrir en el navegador la muestra a pantalla completa.
+
+Hace falta el SDK de Flutter en el PATH del usuario que ejecuta el servidor. Es la versión web de la app: los plugins que solo existen en Android o iOS (cámara nativa, notificaciones, compras, anuncios…) no funcionan en ella, y el inicio de sesión con ventanas emergentes de Firebase tampoco.
 
 En **Builds → Abrir asistente** se prepara la publicación en App Store a partir de la conexión de App Store Connect:
 

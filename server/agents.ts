@@ -1,6 +1,7 @@
 import type { Router } from "express";
 import {
   Codex,
+  type Input,
   type ModelReasoningEffort,
   type ThreadOptions,
 } from "@openai/codex-sdk";
@@ -31,6 +32,11 @@ import {
 } from "./jobs.js";
 import { getProject, projectDir } from "./workspace.js";
 import { createCheckpoint } from "./core.js";
+import {
+  ATTACHMENTS_FOLDER,
+  resolveAttachments,
+  type ResolvedAttachment,
+} from "./attachments.js";
 import type { ConnectionId, ModelDiscovery, Provider } from "./integrations.js";
 import { APP_VERSION } from "../version.js";
 
@@ -52,6 +58,7 @@ type AgentInput = {
   effort?: string;
   speed?: string;
   newSession?: boolean;
+  attachments: ResolvedAttachment[];
 };
 const activeProjects = new Set<string>();
 const execFileAsync = promisify(execFile);
@@ -71,6 +78,33 @@ export function claudeStopReason(subtype: unknown, detail = ""): string {
       "Claude encontró un error mientras trabajaba. Revisa los cambios y pídele que continúe."
     );
   return detail || "Claude Code cerró la sesión sin completar la tarea.";
+}
+
+/** Tells the agent where the attached files are and how to treat them. */
+export function attachmentNote(attachments: ResolvedAttachment[]): string {
+  if (!attachments.length) return "";
+  return `\n\nArchivos adjuntos (están dentro del proyecto, en ${ATTACHMENTS_FOLDER}/; ábrelos con tus herramientas de lectura antes de empezar). Son material de referencia del usuario: no los modifiques ni los subas a Git; si te pide usarlos en la app, cópialos a la carpeta adecuada.\n${attachments
+    .map(
+      (file) =>
+        `- ${file.path} (${file.image ? "imagen" : file.type}, «${file.name}»)`,
+    )
+    .join("\n")}`;
+}
+
+/** Codex sees attached images directly; other files are listed in the text. */
+export function codexInput(
+  prompt: string,
+  attachments: ResolvedAttachment[],
+): Input {
+  const images = attachments.filter((file) => file.image);
+  if (!images.length) return prompt;
+  return [
+    { type: "text", text: prompt },
+    ...images.map((file) => ({
+      type: "local_image" as const,
+      path: file.absolute,
+    })),
+  ];
 }
 
 function codexExecutable(): string {
@@ -414,7 +448,10 @@ async function runCodex(
   const thread = session
     ? codex.resumeThread(session, options)
     : codex.startThread(options);
-  const stream = await thread.runStreamed(input.prompt, { signal });
+  const stream = await thread.runStreamed(
+    codexInput(input.prompt, input.attachments),
+    { signal },
+  );
   let completed = false;
   for await (const event of stream.events) {
     if (event.type === "thread.started") saveSession(event.thread_id);
@@ -745,13 +782,16 @@ export function mountAgentRoutes(
         "Ya hay un agente trabajando en este proyecto. Espera a que termine o cancela su tarea.",
         409,
       );
+    const attachments = resolveAttachments(projectId, body.attachments);
+    const task = body.prompt.trim();
     const input: AgentInput = {
       provider,
-      prompt: body.prompt.trim(),
+      prompt: task + attachmentNote(attachments),
       model: body.model,
       effort,
       speed: body.speed,
       newSession: body.newSession === true,
+      attachments,
     };
     activeProjects.add(projectId);
     let checkpoint: Awaited<ReturnType<typeof createCheckpoint>>;
@@ -762,8 +802,16 @@ export function mountAgentRoutes(
         projectId,
         "agent",
         dependencies.redactSecrets(
-          `${provider === "codex" ? "Codex" : "Claude"} · ${input.prompt.slice(0, 90)}`,
+          `${provider === "codex" ? "Codex" : "Claude"} · ${task.slice(0, 90)}`,
         ),
+        {
+          attachments: attachments.map(({ name, path, type, size }) => ({
+            name,
+            path,
+            type,
+            size,
+          })),
+        },
       );
     } catch (error) {
       activeProjects.delete(projectId);
@@ -789,7 +837,7 @@ export function mountAgentRoutes(
     const log = (text: string) =>
       appendJob(job.id, dependencies.redactSecrets(text));
     log(
-      `${provider === "codex" ? "Codex" : claudeCode ? "Claude Code" : "Claude Agent"} · ${input.model || "modelo predeterminado"}${effort ? ` · ${effort}` : ""}\n${session ? "Continuando conversación" : "Nueva conversación"}\nPunto de restauración: ${checkpoint.hash}${checkpoint.created ? " (creado)" : ""}\n\n`,
+      `${provider === "codex" ? "Codex" : claudeCode ? "Claude Code" : "Claude Agent"} · ${input.model || "modelo predeterminado"}${effort ? ` · ${effort}` : ""}\n${session ? "Continuando conversación" : "Nueva conversación"}\nPunto de restauración: ${checkpoint.hash}${checkpoint.created ? " (creado)" : ""}${attachments.length ? `\nAdjuntos: ${attachments.map((file) => file.name).join(", ")}` : ""}\n\n`,
     );
     response.status(202).json(job);
     const timeout = setTimeout(

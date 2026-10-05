@@ -18,6 +18,7 @@ import {
   writeFile,
 } from "./workspace.js";
 import { publicRemoteUrl, remoteLabel, remoteWebUrl } from "./remotes.js";
+import { flutterOrganization, startFlutterCreate } from "./flutter.js";
 import {
   cancelJob,
   commandEnvironment,
@@ -380,14 +381,28 @@ export async function restoreFile(
 export function createCoreRouter(): Router {
   const router = Router();
   router.get("/projects", (_req, res) => res.json(listProjects()));
-  router.post("/projects", (req, res) => {
+  router.post("/projects", async (req, res) => {
     if (!req.body || typeof req.body !== "object")
       throw httpError(400, "Introduce los datos del proyecto.");
+    const flutter = req.body.template === "flutter";
+    const organization = flutter
+      ? flutterOrganization(req.body.organization)
+      : undefined;
     const project = createProject({
       name: req.body.name,
       template: req.body.template ?? "web",
       description: req.body.description,
+      organization,
     });
+    if (flutter) {
+      try {
+        await startFlutterCreate(project.id, organization);
+      } catch (error) {
+        // Without Flutter on the server there is nothing to keep.
+        deleteProject(project.id);
+        throw error;
+      }
+    }
     res.status(201).json(project);
   });
   router.get("/projects/:id", (req, res) =>

@@ -18,6 +18,7 @@ import {
   CloudUpload,
   Code2,
   Copy,
+  ExternalLink,
   FileCode2,
   FileJson,
   FilePlus2,
@@ -28,10 +29,12 @@ import {
   GitBranch,
   GitCommitHorizontal,
   Hammer,
+  ImagePlus,
   Info,
   Monitor,
   PanelRightClose,
   PanelRightOpen,
+  Paperclip,
   Play,
   Plug,
   RefreshCw,
@@ -46,6 +49,13 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, errorMessage, post, serverUrl } from "./api";
+import {
+  ComposerAttachments,
+  MAX_ATTACHMENTS,
+  MessageAttachments,
+  useAttachmentUploads,
+  type DraftAttachment,
+} from "./Attachments";
 import type {
   Connection,
   FileEntry,
@@ -105,6 +115,27 @@ function writeLocal(key: string, value: string) {
     /* Preferences are optional; the studio works without storage. */
   }
 }
+/** Uploaded attachments of an unsent message survive closing the app. */
+function savedAttachments(projectId: string): DraftAttachment[] {
+  try {
+    const value = JSON.parse(
+      readLocal(`${DRAFT_KEY}.${projectId}.files`) || "[]",
+    );
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter(
+        (file) =>
+          file &&
+          typeof file.path === "string" &&
+          typeof file.name === "string" &&
+          typeof file.type === "string" &&
+          typeof file.size === "number",
+      )
+      .slice(0, MAX_ATTACHMENTS);
+  } catch {
+    return [];
+  }
+}
 function savedTab(projectId: string): Tab {
   const value = readLocal(`${TAB_KEY}.${projectId}`);
   return tabIds.includes(value) ? (value as Tab) : "code";
@@ -144,6 +175,7 @@ type AgentDraft = {
   effort: string;
   speed: string;
   prompt: string;
+  attachments: DraftAttachment[];
 };
 const tabs = [
   { id: "code", name: "Código", icon: Code2 },
@@ -209,11 +241,27 @@ export function Workspace({
       effort: preferences.choices[provider]?.effort ?? "",
       speed: "",
       prompt: initialPrompt || readLocal(`${DRAFT_KEY}.${project.id}`) || "",
+      attachments: savedAttachments(project.id),
     };
   });
   useEffect(() => {
     writeLocal(`${DRAFT_KEY}.${project.id}`, agentDraft.prompt);
   }, [project.id, agentDraft.prompt]);
+  useEffect(() => {
+    writeLocal(
+      `${DRAFT_KEY}.${project.id}.files`,
+      agentDraft.attachments.length
+        ? JSON.stringify(
+            agentDraft.attachments.map(({ name, path, type, size }) => ({
+              name,
+              path,
+              type,
+              size,
+            })),
+          )
+        : "",
+    );
+  }, [project.id, agentDraft.attachments]);
   useEffect(() => {
     const preferences = agentPreferences();
     preferences.provider = agentDraft.provider;
@@ -384,18 +432,27 @@ export function Workspace({
       document.removeEventListener("visibilitychange", resume);
     };
   }, [project.id]);
-  const previousRunning = useRef(false);
+  const previousRunning = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const running = jobs.some((j) => j.status === "running");
-    if (previousRunning.current && !running) {
-      void refreshFiles().catch((e) =>
-        notifyRef.current(errorMessage(e), "error"),
-      );
-      setRevision((v) => v + 1);
-      if (activeRef.current && !dirtyRef.current) void read(activeRef.current);
-    }
+    // Refresh as soon as any task ends, even while others keep running (a new
+    // Flutter app is created first and then compiled).
+    const running = new Set(
+      jobs.filter((j) => j.status === "running").map((j) => j.id),
+    );
+    const ended = [...previousRunning.current].some((id) => !running.has(id));
     previousRunning.current = running;
-  }, [jobs, read, refreshFiles]);
+    if (!ended) return;
+    void refreshFiles()
+      .then((list) => {
+        if (!activeRef.current && !dirtyRef.current) {
+          const first = initialFile(project, list);
+          if (first) void read(first);
+        }
+      })
+      .catch((e) => notifyRef.current(errorMessage(e), "error"));
+    setRevision((v) => v + 1);
+    if (activeRef.current && !dirtyRef.current) void read(activeRef.current);
+  }, [jobs, read, refreshFiles, project]);
   const save = useCallback((): Promise<boolean> => {
     if (saveInFlight.current) return saveInFlight.current;
     if (!dirtyRef.current) return Promise.resolve(true);
@@ -483,6 +540,16 @@ export function Workspace({
       job,
       ...current.filter((item) => item.id !== job.id),
     ]);
+  };
+  /** Hands a prepared request (such as a build error) to the agent to review and send. */
+  const askAgent = (text: string) => {
+    setAgentDraft((current) => ({
+      ...current,
+      prompt: current.prompt.trim()
+        ? `${current.prompt.trim()}\n\n${text}`
+        : text,
+    }));
+    setTab("agent");
   };
   const extensions = useMemo(() => editorLanguage(activeFile), [activeFile]);
   const agentPanel = (
@@ -842,6 +909,7 @@ export function Workspace({
             notify={notify}
             jobs={jobs}
             onStart={onStart}
+            onAskAgent={askAgent}
           />
         )}
         {tab === "terminal" && (
@@ -946,6 +1014,7 @@ export function Workspace({
 function initialFile(project: Project, files: FileEntry[]): string {
   if (project.template === "react") return "src/App.jsx";
   if (project.template === "web") return "index.html";
+  if (files.some((f) => f.path === "lib/main.dart")) return "lib/main.dart";
   const top = files.filter((f) => f.type === "file" && !f.path.includes("/"));
   return (
     (
@@ -1192,6 +1261,32 @@ function AgentPanel({
   const conversationRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
   const touch = useMemo(isTouchInput, []);
+  const { attachments } = draft;
+  const imageInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const { uploads, add: attach } = useAttachmentUploads(
+    project.id,
+    attachments.length,
+    (file) =>
+      setDraft((current) => ({
+        ...current,
+        attachments: [...current.attachments, file],
+      })),
+    notify,
+  );
+  const removeAttachment = (file: DraftAttachment) =>
+    setDraft((current) => ({
+      ...current,
+      attachments: current.attachments.filter(
+        (item) => item.path !== file.path,
+      ),
+    }));
+  const pickFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = [...(event.target.files ?? [])];
+    event.target.value = "";
+    void attach(files);
+  };
   const setProvider = (provider: string) =>
     setDraft((current) => {
       if (current.provider === provider) return current;
@@ -1287,7 +1382,8 @@ function AgentPanel({
       runInFlight.current ||
       running ||
       !connected ||
-      loadingModels
+      loadingModels ||
+      uploads.length > 0
     )
       return;
     runInFlight.current = true;
@@ -1295,6 +1391,7 @@ function AgentPanel({
     setBusy(true);
     onBusyChange(true);
     const submitted = prompt;
+    const sent = new Set(attachments.map((file) => file.path));
     try {
       await beforeRun();
       const job = await post<Job>(`/projects/${project.id}/agent`, {
@@ -1303,11 +1400,14 @@ function AgentPanel({
         effort: activeModel?.efforts.includes(effort) ? effort : undefined,
         speed: activeModel?.speeds.includes(speed) ? speed : undefined,
         prompt: submitted,
+        attachments: sent.size ? [...sent] : undefined,
       });
       onStart(job);
-      setDraft((current) =>
-        current.prompt === submitted ? { ...current, prompt: "" } : current,
-      );
+      setDraft((current) => ({
+        ...current,
+        prompt: current.prompt === submitted ? "" : current.prompt,
+        attachments: current.attachments.filter((file) => !sent.has(file.path)),
+      }));
     } catch (e) {
       notify(errorMessage(e), "error");
     } finally {
@@ -1398,6 +1498,10 @@ function AgentPanel({
             <article className="agent-message" key={job.id}>
               <div className="agent-message-user">
                 <p>{job.title}</p>
+                <MessageAttachments
+                  projectId={project.id}
+                  files={job.attachments}
+                />
               </div>
               <div className="agent-message-result">
                 <div className="agent-message-meta">
@@ -1540,14 +1644,48 @@ function AgentPanel({
             fondo, tarda más y consume más cuota de tu plan.
           </p>
         )}
-        <div className="agent-prompt">
+        <div
+          className={`agent-prompt ${dragging ? "dragging" : ""}`}
+          onDragOver={(e) => {
+            if (![...e.dataTransfer.types].includes("Files")) return;
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+              setDragging(false);
+          }}
+          onDrop={(e) => {
+            setDragging(false);
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+            void attach([...e.dataTransfer.files]);
+          }}
+        >
+          <ComposerAttachments
+            projectId={project.id}
+            files={attachments}
+            uploads={uploads}
+            onRemove={removeAttachment}
+          />
           <textarea
             ref={promptRef}
             aria-label="Mensaje al agente"
-            placeholder="Pídele algo a tu agente…"
+            placeholder={
+              attachments.length
+                ? "Explica qué quieres que haga con los adjuntos…"
+                : "Pídele algo a tu agente…"
+            }
             rows={3}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onPaste={(e) => {
+              // Pasting a screenshot attaches it.
+              const files = [...e.clipboardData.files];
+              if (!files.length) return;
+              if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+              void attach(files);
+            }}
             onKeyDown={(e) => {
               if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
               // Enter sends, Shift+Enter adds a line. Touch keyboards keep
@@ -1559,9 +1697,48 @@ function AgentPanel({
             }}
           />
           <div>
-            <span className="agent-context">
-              <FileCode2 size={13} />
-              Proyecto completo
+            <span className="agent-tools">
+              <button
+                type="button"
+                className="attach-button"
+                aria-label="Adjuntar imágenes"
+                title="Adjuntar imágenes o capturas"
+                onClick={() => imageInput.current?.click()}
+              >
+                <ImagePlus size={17} />
+              </button>
+              <button
+                type="button"
+                className="attach-button"
+                aria-label="Adjuntar archivos"
+                title="Adjuntar archivos"
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip size={16} />
+              </button>
+              <input
+                ref={imageInput}
+                className="file-picker"
+                type="file"
+                accept="image/*"
+                multiple
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={pickFiles}
+              />
+              <input
+                ref={fileInput}
+                className="file-picker"
+                type="file"
+                multiple
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={pickFiles}
+              />
+              <span className="agent-context">
+                <FileCode2 size={13} />
+                Proyecto completo
+              </span>
             </span>
             {running ? (
               <button
@@ -1581,7 +1758,13 @@ function AgentPanel({
                 className="send-button"
                 aria-label="Enviar al agente"
                 title="Enviar al agente"
-                disabled={!connected || !prompt.trim() || busy || loadingModels}
+                disabled={
+                  !connected ||
+                  !prompt.trim() ||
+                  busy ||
+                  loadingModels ||
+                  uploads.length > 0
+                }
                 onClick={() => void run()}
               >
                 {busy ? <Spinner /> : <ArrowUp size={18} strokeWidth={2.4} />}
@@ -1602,13 +1785,15 @@ function AgentPanel({
 type FlutterStatus = {
   flutter: boolean;
   sdk: string | null;
+  /** Folder of the app inside the project; "" when it is the root. */
+  folder: string;
   needsWeb: boolean;
   builtAt: string | null;
   url: string | null;
   job: Job | null;
 };
 
-/** Imported Flutter apps get a web build preview; everything else is static. */
+/** Flutter apps get a web build preview; everything else is static. */
 function Preview({
   project,
   revision,
@@ -1617,6 +1802,7 @@ function Preview({
   notify,
   jobs,
   onStart,
+  onAskAgent,
 }: {
   project: Project;
   revision: number;
@@ -1625,12 +1811,13 @@ function Preview({
   notify: ToastFn;
   jobs: Job[];
   onStart: (job: Job) => void;
+  onAskAgent: (prompt: string) => void;
 }) {
-  const repository = project.template === "repo";
   const [flutter, setFlutter] = useState<FlutterStatus | null>(null);
-  const [checked, setChecked] = useState(!repository);
+  const [checked, setChecked] = useState(false);
   useEffect(() => {
-    if (!repository) return;
+    // Any project can hold a Flutter app: imported, created as Flutter or
+    // generated by the agent inside another project.
     let stopped = false;
     api<FlutterStatus>(`/projects/${project.id}/flutter`)
       .then((status) => {
@@ -1645,7 +1832,7 @@ function Preview({
     return () => {
       stopped = true;
     };
-  }, [project.id, repository, revision]);
+  }, [project.id, revision]);
   if (!checked)
     return (
       <div className="preview-panel">
@@ -1665,6 +1852,7 @@ function Preview({
         notify={notify}
         jobs={jobs}
         onStart={onStart}
+        onAskAgent={onAskAgent}
       />
     );
   return (
@@ -1698,6 +1886,9 @@ function useConsoleLogs(frame: React.RefObject<HTMLIFrameElement | null>) {
   return [logs, setLogs] as const;
 }
 
+const FLUTTER_HELP =
+  "Si algo solo existe en móvil (plugins nativos, dart:io, notificaciones…), protégelo con kIsWeb o con importaciones condicionales.";
+
 function FlutterPreview({
   project,
   status,
@@ -1706,6 +1897,7 @@ function FlutterPreview({
   notify,
   jobs,
   onStart,
+  onAskAgent,
 }: {
   project: Project;
   status: FlutterStatus;
@@ -1714,22 +1906,58 @@ function FlutterPreview({
   notify: ToastFn;
   jobs: Job[];
   onStart: (job: Job) => void;
+  onAskAgent: (prompt: string) => void;
 }) {
   const [device, setDevice] = useState<"mobile" | "desktop">("mobile");
   const [starting, setStarting] = useState(false);
   const [reload, setReload] = useState(0);
   const frame = useRef<HTMLIFrameElement>(null);
   const [logs, setLogs] = useConsoleLogs(frame);
+  const [ready, setReady] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const job =
     jobs.find(
       (item) => item.kind === "build" && item.title.startsWith("Flutter"),
     ) ?? status.job;
   const building = job?.status === "running";
+  const creating = !!job?.title.includes("crear");
   const failed =
     !building &&
     job?.status === "failed" &&
     (!status.builtAt || job.createdAt > status.builtAt);
-  const errors = logs.filter((log) => log.level === "error").length;
+  const errors = logs.filter((log) => log.level === "error");
+  const source = status.url
+    ? `${serverUrl()}${status.url}?v=${encodeURIComponent(`${status.builtAt}-${reload}`)}`
+    : "";
+  useEffect(() => {
+    // Each load starts over: wait for Flutter's first frame.
+    setReady(false);
+    setSlow(false);
+    setStalled(false);
+    if (!source) return;
+    const message = (e: MessageEvent) => {
+      if (
+        e.source === frame.current?.contentWindow &&
+        e.data?.type === "appbuilder:ready"
+      )
+        setReady(true);
+    };
+    window.addEventListener("message", message);
+    const timer = setTimeout(() => setSlow(true), 25_000);
+    return () => {
+      window.removeEventListener("message", message);
+      clearTimeout(timer);
+    };
+  }, [source]);
+  const firstError = errors[0]?.text;
+  useEffect(() => {
+    // An error before the first frame usually means the app could not start;
+    // give it a moment in case it recovers.
+    if (ready || !firstError) return;
+    const timer = setTimeout(() => setStalled(true), 2500);
+    return () => clearTimeout(timer);
+  }, [ready, firstError]);
   async function build() {
     setStarting(true);
     try {
@@ -1742,10 +1970,27 @@ function FlutterPreview({
       setStarting(false);
     }
   }
-  const source = status.url
-    ? `${serverUrl()}${status.url}?v=${encodeURIComponent(`${status.builtAt}-${reload}`)}`
-    : "";
-  const tail = (job?.output ?? "").trim().split("\n").slice(-12).join("\n");
+  const lines = (job?.output ?? "").trim().split("\n");
+  const tail = lines.slice(-12).join("\n");
+  const where = status.folder ? ` (carpeta ${status.folder}/)` : "";
+  function askAgent(kind: "build" | "runtime") {
+    const details = (
+      kind === "build"
+        ? lines
+            .filter((line) => line.trim())
+            .slice(-60)
+            .join("\n")
+        : errors
+            .slice(-10)
+            .map((log) => log.text)
+            .join("\n\n")
+    ).slice(-6000);
+    onAskAgent(
+      kind === "build"
+        ? `La vista previa web de esta app de Flutter${where} no compila. Este es el final del registro de flutter build web:\n\n\`\`\`\n${details}\n\`\`\`\n\nCorrige el código para que compile y arranque en la web sin romper Android ni iOS. ${FLUTTER_HELP}`
+        : `La app de Flutter${where} falla en la vista previa web. Estos son los errores de la consola:\n\n\`\`\`\n${details}\n\`\`\`\n\nEncuentra la causa y corrígela para que la app arranque en la web sin romper Android ni iOS. ${FLUTTER_HELP}`,
+    );
+  }
   return (
     <div className="preview-panel">
       <div className="preview-toolbar">
@@ -1773,19 +2018,35 @@ function FlutterPreview({
           <span className="flutter-mark" aria-hidden="true">
             ◆
           </span>
+          {status.folder ? `${status.folder}/ · ` : ""}
           {status.builtAt
             ? `Flutter · compilado ${relativeDate(status.builtAt).toLowerCase()}`
             : "Flutter · sin compilar"}
         </span>
         {status.url && !building && (
-          <button
-            className="icon-button"
-            aria-label="Reiniciar la app"
-            title="Reiniciar la app"
-            onClick={() => setReload((value) => value + 1)}
-          >
-            <RotateCcw size={16} />
-          </button>
+          <>
+            <button
+              className="icon-button"
+              aria-label="Reiniciar la app"
+              title="Reiniciar la app"
+              onClick={() => {
+                setLogs([]);
+                setReload((value) => value + 1);
+              }}
+            >
+              <RotateCcw size={16} />
+            </button>
+            <a
+              className="icon-button"
+              href={source}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Abrir en el navegador"
+              title="Abrir en el navegador, a pantalla completa"
+            >
+              <ExternalLink size={16} />
+            </a>
+          </>
         )}
         <button
           className="button small primary"
@@ -1826,10 +2087,15 @@ function FlutterPreview({
             <div className="import-progress-head">
               <Spinner />
               <div>
-                <strong>Compilando {project.name} para la web…</strong>
+                <strong>
+                  {creating
+                    ? `Creando ${project.name} con Flutter…`
+                    : `Compilando ${project.name} para la web…`}
+                </strong>
                 <small>
-                  La primera vez tarda uno o dos minutos; después es más rápido.
-                  Puedes seguir trabajando mientras tanto.
+                  {creating
+                    ? "Se genera la app y, a continuación, su vista previa. Puedes salir y volver cuando quieras."
+                    : "La primera vez tarda uno o dos minutos; después es más rápido. Puedes seguir trabajando mientras tanto."}
                 </small>
               </div>
             </div>
@@ -1840,14 +2106,36 @@ function FlutterPreview({
             <div className="import-progress-head failed">
               <CircleAlert size={20} />
               <div>
-                <strong>La compilación falló</strong>
+                <strong>
+                  {creating
+                    ? "No se pudo crear la app"
+                    : "La compilación falló"}
+                </strong>
                 <small>
-                  Corrige los errores (o pídeselo al agente) y vuelve a
-                  compilar.
+                  {creating
+                    ? "Revisa el registro y vuelve a intentarlo."
+                    : "El agente puede leer el error y corregir el código por ti."}
                 </small>
               </div>
             </div>
             <pre className="import-log">{tail}</pre>
+            <div className="flutter-actions">
+              {!creating && (
+                <button
+                  className="button primary"
+                  onClick={() => askAgent("build")}
+                >
+                  <Sparkles size={16} /> Pedir al agente que lo arregle
+                </button>
+              )}
+              <button
+                className="button secondary"
+                disabled={starting}
+                onClick={() => void build()}
+              >
+                <RotateCcw size={15} /> Reintentar
+              </button>
+            </div>
           </div>
         ) : !source ? (
           <Empty
@@ -1867,7 +2155,7 @@ function FlutterPreview({
             AppBuilder compila la app para la web en tu servidor y la muestra en
             formato móvil.
             {status.needsWeb &&
-              " Como el proyecto aún no tiene soporte web, se añadirá la carpeta web/."}
+              " Como aún no tiene soporte web, se añadirá la carpeta web/."}
           </Empty>
         ) : (
           <div className={`preview-device ${device}`}>
@@ -1878,13 +2166,57 @@ function FlutterPreview({
                 <span>••• ▰</span>
               </div>
             )}
-            <iframe
-              key={source}
-              ref={frame}
-              title="Vista previa del proyecto"
-              sandbox="allow-scripts allow-forms allow-popups allow-pointer-lock"
-              src={source}
-            />
+            <div className="flutter-screen">
+              <iframe
+                key={source}
+                ref={frame}
+                title="Vista previa del proyecto"
+                sandbox="allow-scripts allow-forms allow-popups allow-pointer-lock"
+                src={source}
+              />
+              {!ready && (stalled || slow) ? (
+                <div className="flutter-overlay" role="status">
+                  <CircleAlert size={22} />
+                  <strong>
+                    {stalled
+                      ? "La app no ha podido arrancar"
+                      : "La app está tardando en arrancar"}
+                  </strong>
+                  <p>
+                    {stalled && firstError
+                      ? firstError.slice(0, 280)
+                      : "Puede estar esperando a un servicio, un permiso o un plugin que no existe en la web."}
+                  </p>
+                  <div>
+                    {stalled && (
+                      <button
+                        className="button small primary"
+                        onClick={() => askAgent("runtime")}
+                      >
+                        <Sparkles size={14} /> Pedir al agente que lo arregle
+                      </button>
+                    )}
+                    <button
+                      className="button small secondary"
+                      onClick={() => {
+                        setStalled(false);
+                        setSlow(false);
+                        setReady(true);
+                      }}
+                    >
+                      Ver la app igualmente
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                !ready && (
+                  <div className="flutter-overlay subtle" role="status">
+                    <Spinner />
+                    <span>Arrancando la app…</span>
+                  </div>
+                )
+              )}
+            </div>
             {device === "mobile" && (
               <div className="phone-bottom">
                 <span />
@@ -1900,10 +2232,15 @@ function FlutterPreview({
           <span>
             {logs.length} {logs.length === 1 ? "mensaje" : "mensajes"}
           </span>
-          {errors > 0 && (
-            <Tag tone="danger">
-              {errors} {errors === 1 ? "error" : "errores"}
-            </Tag>
+          {errors.length > 0 && (
+            <>
+              <Tag tone="danger">
+                {errors.length} {errors.length === 1 ? "error" : "errores"}
+              </Tag>
+              <button onClick={() => askAgent("runtime")}>
+                Pedir ayuda al agente
+              </button>
+            </>
           )}
           <button onClick={() => setLogs([])} disabled={!logs.length}>
             Limpiar
@@ -1923,8 +2260,9 @@ function FlutterPreview({
       </div>
       <div className="preview-note">
         <Monitor size={14} />
-        Vista previa web de Flutter · Los plugins nativos (cámara, Bluetooth,
-        notificaciones…) solo funcionan en una build de dispositivo.
+        Vista previa web de Flutter · Lo que guarde la app dura mientras está
+        abierta, y los plugins nativos (cámara, Bluetooth, notificaciones…) solo
+        funcionan en el dispositivo.
       </div>
     </div>
   );
