@@ -217,7 +217,7 @@ test("edit, save, preview, inspect diff, commit and execute a real command", asy
   await noPageOverflow(page);
 });
 
-test("a failed save blocks sidebar navigation, preserves the draft and permits retry", async ({
+test("a failed save blocks leaving the project, preserves the draft and permits retry", async ({
   page,
 }, testInfo) => {
   await openStudio(page);
@@ -251,15 +251,18 @@ test("a failed save blocks sidebar navigation, preserves the draft and permits r
       : route.continue(),
   );
 
+  // Phones leave a project with its back button; desktops via the sidebar.
+  const phone = testInfo.project.name === "mobile";
   const clickBuilds = async () => {
-    if (testInfo.project.name === "mobile")
+    if (phone)
       await page
-        .getByRole("button", { name: "Abrir menú", exact: true })
+        .getByRole("button", { name: "Volver a proyectos", exact: true })
         .click();
-    await page
-      .locator(".sidebar nav")
-      .getByRole("button", { name: "Builds", exact: true })
-      .click();
+    else
+      await page
+        .locator(".sidebar nav")
+        .getByRole("button", { name: "Builds", exact: true })
+        .click();
   };
   await clickBuilds();
   const confirmation = page.getByRole("dialog", {
@@ -283,12 +286,6 @@ test("a failed save blocks sidebar navigation, preserves the draft and permits r
   await confirmation
     .getByRole("button", { name: "Cerrar", exact: true })
     .click();
-  if (testInfo.project.name === "mobile") {
-    // The sidebar covers the scrim's center; tap its exposed right edge.
-    await page
-      .getByRole("button", { name: "Cerrar menú", exact: true })
-      .click({ position: { x: page.viewportSize()!.width - 8, y: 80 } });
-  }
   await expect(page.locator(".cm-content")).toContainText(
     `NO PERDER ${testInfo.project.name}`,
   );
@@ -305,7 +302,9 @@ test("a failed save blocks sidebar navigation, preserves the draft and permits r
     .getByRole("button", { name: "Guardar y continuar", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: /Listo para despegar/ }),
+    page.getByRole("heading", {
+      name: phone ? /^Proyectos/ : /Listo para despegar/,
+    }),
   ).toBeVisible();
   expect(
     (await (await page.request.get(fileURL + "?path=index.html")).json())
@@ -585,4 +584,42 @@ test("Flutter apps start from the new-project form with their bundle ID", async 
   expect(projects.some((project) => project.name === "Mi Tienda 2")).toBe(
     false,
   );
+});
+
+test("on phones the editor gets symbol keys and the section bar steps aside", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Touch keyboards only");
+  await openStudio(page);
+  await page
+    .locator(".project-card")
+    .filter({
+      has: page.getByRole("heading", { name: "Orbit Notes", exact: true }),
+    })
+    .click();
+  const editor = page.locator(".cm-content");
+  await expect(editor).toBeVisible();
+  // One compact header: the global top bar gives way to the project's.
+  await expect(page.locator(".topbar")).toBeHidden();
+  await expect(page.locator(".workspace-title")).toContainText("Orbit Notes");
+  const sections = page.locator(".workspace-tabs");
+  await expect(sections).toBeVisible();
+  const editorBox = (await editor.boundingBox())!;
+  const sectionsBox = (await sections.boundingBox())!;
+  expect(sectionsBox.y).toBeGreaterThan(editorBox.y);
+  await editor.click({ position: { x: 40, y: 10 } });
+  await page.keyboard.press("Control+Home");
+  const keys = page.getByRole("toolbar", { name: "Teclas de código" });
+  await expect(keys).toBeVisible();
+  await expect(sections).toBeHidden();
+  await keys.getByRole("button", { name: "{", exact: true }).click();
+  await expect(editor).toBeFocused();
+  await expect(editor.locator(".cm-line").first()).toHaveText(/^\{/);
+  await expect(page.locator(".workspace-title")).toContainText("Sin guardar");
+  await keys.getByRole("button", { name: "Deshacer" }).click();
+  await expect(editor.locator(".cm-line").first()).not.toHaveText(/^\{/);
+  await keys.getByRole("button", { name: "Ocultar teclado" }).click();
+  await expect(keys).toBeHidden();
+  await expect(sections).toBeVisible();
+  await noPageOverflow(page);
 });

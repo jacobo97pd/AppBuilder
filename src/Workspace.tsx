@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import CodeMirror from "@uiw/react-codemirror";
+import CodeMirror, { EditorView } from "@uiw/react-codemirror";
+import { redo, undo } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
@@ -37,6 +38,7 @@ import {
   Paperclip,
   Play,
   Plug,
+  Redo2,
   RefreshCw,
   RotateCcw,
   Save,
@@ -47,6 +49,7 @@ import {
   Square,
   Terminal as TerminalIcon,
   Trash2,
+  Undo2,
 } from "lucide-react";
 import { api, errorMessage, post, serverUrl } from "./api";
 import {
@@ -76,6 +79,7 @@ import {
   StatusDot,
   Tag,
   type Tone,
+  useMediaQuery,
 } from "./ui";
 
 // Above this many entries the explorer starts with folders collapsed.
@@ -168,6 +172,40 @@ function lastOutputLine(output: string): string {
   );
 }
 
+/** True while the code editor has the keyboard. */
+function editingCode(): boolean {
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLElement &&
+    active.isContentEditable &&
+    !!active.closest(".cm-editor")
+  );
+}
+
+/** How much of the bottom of the screen an on-screen keyboard covers. */
+function useKeyboardOffset(): number {
+  const [offset, setOffset] = useState(0);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () =>
+      setOffset(
+        Math.max(
+          0,
+          Math.round(window.innerHeight - viewport.height - viewport.offsetTop),
+        ),
+      );
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, []);
+  return offset;
+}
+
 type Tab = "code" | "agent" | "preview" | "terminal" | "git";
 type AgentDraft = {
   provider: string;
@@ -230,6 +268,26 @@ export function Workspace({
   const treeReady = useRef(false);
   const [settings, setSettings] = useState(false);
   const [pendingFile, setPendingFile] = useState<string | null>(null);
+  // Phones get a focused layout: soft-wrapped code, no fold gutter, symbol
+  // keys over the keyboard and no section bar while editing code. Message
+  // boxes keep the bar: on iOS the keyboard already covers it, and moving
+  // the box under the keyboard would make it jump.
+  const touch = useMemo(isTouchInput, []);
+  const compact = useMediaQuery("(max-width: 700px)");
+  const [editing, setEditing] = useState(false);
+  const [editorFocused, setEditorFocused] = useState(false);
+  const editorView = useRef<EditorView | null>(null);
+  // Decide after the tap has finished: moving the layout while a touch is
+  // still being handled would send the tap to whatever moved under it.
+  const editingTimer = useRef<number | undefined>(undefined);
+  const updateEditing = useCallback(() => {
+    window.clearTimeout(editingTimer.current);
+    editingTimer.current = window.setTimeout(
+      () => setEditing(touch && editingCode()),
+      150,
+    );
+  }, [touch]);
+  useEffect(() => () => window.clearTimeout(editingTimer.current), []);
   const [agentDraft, setAgentDraft] = useState<AgentDraft>(() => {
     // Keep the chosen model and effort, and any unsent message, across
     // app restarts (phones close apps in the background).
@@ -551,7 +609,30 @@ export function Workspace({
     }));
     setTab("agent");
   };
-  const extensions = useMemo(() => editorLanguage(activeFile), [activeFile]);
+  const handleEditorChange = useCallback((value: string) => {
+    editVersion.current++;
+    contentRef.current = value;
+    dirtyRef.current = value !== savedRef.current;
+    setContent(value);
+  }, []);
+  const basicSetup = useMemo(
+    () => ({
+      lineNumbers: true,
+      foldGutter: !compact,
+      highlightActiveLine: true,
+      autocompletion: true,
+    }),
+    [compact],
+  );
+  const extensions = useMemo(
+    () => [
+      ...editorLanguage(activeFile),
+      ...(compact ? [EditorView.lineWrapping] : []),
+      // Keep the cursor clear of the symbol keys.
+      ...(touch ? [EditorView.scrollMargins.of(() => ({ bottom: 64 }))] : []),
+    ],
+    [activeFile, compact, touch],
+  );
   const agentPanel = (
     <AgentPanel
       project={project}
@@ -591,7 +672,11 @@ export function Workspace({
       return next;
     });
   return (
-    <main className="workspace">
+    <main
+      className={`workspace ${editing ? "editing" : ""}`}
+      onFocus={updateEditing}
+      onBlur={updateEditing}
+    >
       <div className="workspace-toolbar">
         <div>
           <button
@@ -605,6 +690,12 @@ export function Workspace({
           >
             <ArrowLeft size={18} />
           </button>
+          <div className="workspace-title">
+            <strong>{project.name}</strong>
+            <span className={dirty ? "is-dirty" : ""}>
+              {dirty ? "Sin guardar" : "Guardado"} · {branch}
+            </span>
+          </div>
           <span className="workspace-branch" title="Rama de Git">
             <GitBranch size={14} />
             {branch}
@@ -633,7 +724,7 @@ export function Workspace({
             <Settings2 size={18} />
           </button>
           <button
-            className="button small secondary"
+            className="button small secondary save-button"
             aria-label="Guardar archivo"
             title="Guardar (Ctrl + S)"
             onClick={() => void save()}
@@ -645,7 +736,7 @@ export function Workspace({
             <span>Guardar</span>
           </button>
           <button
-            className="button small primary"
+            className="button small primary run-button"
             title="Abrir la vista previa"
             onClick={() => setTab("preview")}
           >
@@ -849,6 +940,11 @@ export function Workspace({
                   ) : (
                     <CodeMirror
                       aria-label="Editor de código"
+                      onCreateEditor={(view) => {
+                        editorView.current = view;
+                      }}
+                      onFocus={() => setEditorFocused(true)}
+                      onBlur={() => setEditorFocused(false)}
                       value={content}
                       height="100%"
                       theme={oneDark}
@@ -862,22 +958,21 @@ export function Workspace({
                         !runningAgent &&
                         !agentStarting
                       }
-                      onChange={(value) => {
-                        editVersion.current++;
-                        contentRef.current = value;
-                        dirtyRef.current = value !== savedRef.current;
-                        setContent(value);
-                      }}
-                      basicSetup={{
-                        lineNumbers: true,
-                        foldGutter: true,
-                        highlightActiveLine: true,
-                        autocompletion: true,
-                      }}
+                      onChange={handleEditorChange}
+                      basicSetup={basicSetup}
                     />
                   )}
                 </div>
-                <div className="editor-statusbar">
+                {touch && editorFocused && activeFile && (
+                  <EditorKeys
+                    view={editorView}
+                    canSave={dirty && !saving}
+                    onSave={() => void save()}
+                  />
+                )}
+                <div
+                  className={`editor-statusbar ${runningAgent || agentStarting ? "locked" : ""}`}
+                >
                   <span>
                     <GitBranch size={13} />
                     {branch}
@@ -914,6 +1009,9 @@ export function Workspace({
         )}
         {tab === "terminal" && (
           <TerminalPanel
+            flutter={files.some(
+              (f) => f.name === "pubspec.yaml" && f.path.split("/").length <= 3,
+            )}
             project={project}
             jobs={jobs.filter((j) => j.kind === "terminal")}
             notify={notify}
@@ -1416,6 +1514,12 @@ function AgentPanel({
       onBusyChange(false);
     }
   }
+  useEffect(() => {
+    const field = promptRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 220)}px`;
+  }, [prompt]);
   const providerReady = (id: string) =>
     connections.some((c) => c.id === id && c.status === "connected");
   return (
@@ -1467,8 +1571,7 @@ function AgentPanel({
               <Sparkles size={26} />
             </div>
             <h3>
-              Una idea.
-              <br />
+              Una idea. <br />
               Muchas posibilidades.
             </h3>
             <p>
@@ -1676,7 +1779,7 @@ function AgentPanel({
                 ? "Explica qué quieres que haga con los adjuntos…"
                 : "Pídele algo a tu agente…"
             }
-            rows={3}
+            rows={1}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onPaste={(e) => {
@@ -2225,27 +2328,66 @@ function FlutterPreview({
           </div>
         )}
       </div>
-      <div className="preview-console">
-        <div>
+      <PreviewConsole
+        logs={logs}
+        onClear={() => setLogs([])}
+        onAskAgent={() => askAgent("runtime")}
+        empty="Los mensajes de tu app (print y errores) aparecerán aquí."
+      />
+      <div className="preview-note">
+        <Monitor size={14} />
+        Vista previa web de Flutter · Lo que guarde la app dura mientras está
+        abierta, y los plugins nativos (cámara, Bluetooth, notificaciones…) solo
+        funcionan en el dispositivo.
+      </div>
+    </div>
+  );
+}
+
+/** Console of a preview. On phones it starts folded to leave room for the app. */
+function PreviewConsole({
+  logs,
+  onClear,
+  onAskAgent,
+  empty,
+}: {
+  logs: { level: string; text: string }[];
+  onClear: () => void;
+  onAskAgent?: () => void;
+  empty: string;
+}) {
+  const [open, setOpen] = useState(() => !isCompactScreen());
+  const errors = logs.filter((log) => log.level === "error").length;
+  return (
+    <div className={`preview-console ${open ? "open" : "folded"}`}>
+      <div>
+        <button
+          className="console-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
           <TerminalIcon size={14} />
           <strong>Consola</strong>
-          <span>
+          <span className="console-count">
             {logs.length} {logs.length === 1 ? "mensaje" : "mensajes"}
           </span>
-          {errors.length > 0 && (
-            <>
-              <Tag tone="danger">
-                {errors.length} {errors.length === 1 ? "error" : "errores"}
-              </Tag>
-              <button onClick={() => askAgent("runtime")}>
-                Pedir ayuda al agente
-              </button>
-            </>
-          )}
-          <button onClick={() => setLogs([])} disabled={!logs.length}>
-            Limpiar
+          <ChevronDown size={15} className="console-chevron" />
+        </button>
+        {errors > 0 && (
+          <Tag tone="danger">
+            {errors} {errors === 1 ? "error" : "errores"}
+          </Tag>
+        )}
+        {errors > 0 && onAskAgent && (
+          <button onClick={onAskAgent}>
+            <Sparkles size={13} /> Pedir ayuda
           </button>
-        </div>
+        )}
+        <button onClick={onClear} disabled={!logs.length}>
+          Limpiar
+        </button>
+      </div>
+      {open && (
         <section>
           {logs.length ? (
             logs.map((log, i) => (
@@ -2254,16 +2396,102 @@ function FlutterPreview({
               </p>
             ))
           ) : (
-            <p>Los mensajes de tu app (print y errores) aparecerán aquí.</p>
+            <p>{empty}</p>
           )}
         </section>
-      </div>
-      <div className="preview-note">
-        <Monitor size={14} />
-        Vista previa web de Flutter · Lo que guarde la app dura mientras está
-        abierta, y los plugins nativos (cámara, Bluetooth, notificaciones…) solo
-        funcionan en el dispositivo.
-      </div>
+      )}
+    </div>
+  );
+}
+
+const EDITOR_KEYS = [
+  "{",
+  "}",
+  "(",
+  ")",
+  "[",
+  "]",
+  "<",
+  ">",
+  "=",
+  ";",
+  ":",
+  ".",
+  ",",
+  '"',
+  "'",
+  "/",
+  "_",
+  "!",
+  "&",
+  "|",
+  "$",
+];
+
+/**
+ * Symbols that phone keyboards hide, plus undo, redo and save, right above
+ * the keyboard while the editor has focus.
+ */
+function EditorKeys({
+  view,
+  canSave,
+  onSave,
+}: {
+  view: React.RefObject<EditorView | null>;
+  canSave: boolean;
+  onSave: () => void;
+}) {
+  const offset = useKeyboardOffset();
+  const run = (action: (editor: EditorView) => unknown) => {
+    const editor = view.current;
+    if (!editor) return;
+    action(editor);
+    editor.focus();
+  };
+  const insert = (text: string) =>
+    run((editor) =>
+      editor.dispatch({
+        ...editor.state.replaceSelection(text),
+        scrollIntoView: true,
+      }),
+    );
+  return (
+    <div
+      className={`editor-keys ${offset ? "" : "docked"}`}
+      role="toolbar"
+      aria-label="Teclas de código"
+      style={offset ? { transform: `translateY(-${offset}px)` } : undefined}
+      // Keep the editor focused (and the keyboard open) while tapping keys.
+      onMouseDown={(e) => e.preventDefault()}
+      onPointerDown={(e) => e.preventDefault()}
+    >
+      <button aria-label="Deshacer" onClick={() => run(undo)}>
+        <Undo2 size={16} />
+      </button>
+      <button aria-label="Rehacer" onClick={() => run(redo)}>
+        <Redo2 size={16} />
+      </button>
+      <button
+        className="wide"
+        aria-label="Sangría"
+        onClick={() => insert("  ")}
+      >
+        ⇥
+      </button>
+      {EDITOR_KEYS.map((key) => (
+        <button key={key} onClick={() => insert(key)}>
+          {key}
+        </button>
+      ))}
+      <button aria-label="Guardar" disabled={!canSave} onClick={onSave}>
+        <Save size={16} />
+      </button>
+      <button
+        aria-label="Ocultar teclado"
+        onClick={() => view.current?.contentDOM.blur()}
+      >
+        <ChevronDown size={18} />
+      </button>
     </div>
   );
 }
@@ -2327,7 +2555,6 @@ function WebPreview({
     window.addEventListener("message", message);
     return () => window.removeEventListener("message", message);
   }, []);
-  const errors = logs.filter((log) => log.level === "error").length;
   return (
     <div className="preview-panel">
       <div className="preview-toolbar">
@@ -2415,34 +2642,11 @@ function WebPreview({
           </div>
         )}
       </div>
-      <div className="preview-console">
-        <div>
-          <TerminalIcon size={14} />
-          <strong>Consola</strong>
-          <span>
-            {logs.length} {logs.length === 1 ? "mensaje" : "mensajes"}
-          </span>
-          {errors > 0 && (
-            <Tag tone="danger">
-              {errors} {errors === 1 ? "error" : "errores"}
-            </Tag>
-          )}
-          <button onClick={() => setLogs([])} disabled={!logs.length}>
-            Limpiar
-          </button>
-        </div>
-        <section>
-          {logs.length ? (
-            logs.map((log, i) => (
-              <p className={log.level} key={i}>
-                {log.text}
-              </p>
-            ))
-          ) : (
-            <p>Los mensajes y errores de tu app aparecerán aquí.</p>
-          )}
-        </section>
-      </div>
+      <PreviewConsole
+        logs={logs}
+        onClear={() => setLogs([])}
+        empty="Los mensajes y errores de tu app aparecerán aquí."
+      />
       <div className="preview-note">
         <Monitor size={14} />
         Vista previa web · Las funciones nativas requieren una build de
@@ -2454,11 +2658,13 @@ function WebPreview({
 
 function TerminalPanel({
   project,
+  flutter,
   jobs,
   notify,
   onStart,
 }: {
   project: Project;
+  flutter: boolean;
   jobs: Job[];
   notify: ToastFn;
   onStart: (job: Job) => void;
@@ -2504,21 +2710,22 @@ function TerminalPanel({
       </div>
       <div className="command-presets">
         <span>Comandos útiles</span>
-        {["git status", "node --version", "npm install", "npm run build"].map(
-          (cmd) => (
-            <button
-              key={cmd}
-              title="Escribir en la terminal"
-              onClick={() => {
-                setCommand(cmd);
-                input.current?.focus();
-              }}
-            >
-              <ChevronRight size={13} />
-              {cmd}
-            </button>
-          ),
-        )}
+        {(flutter
+          ? ["flutter pub get", "flutter analyze", "flutter test", "git status"]
+          : ["git status", "node --version", "npm install", "npm run build"]
+        ).map((cmd) => (
+          <button
+            key={cmd}
+            title="Escribir en la terminal"
+            onClick={() => {
+              setCommand(cmd);
+              input.current?.focus();
+            }}
+          >
+            <ChevronRight size={13} />
+            {cmd}
+          </button>
+        ))}
       </div>
       <div className="terminal-body">
         <aside className="terminal-sessions">
@@ -2570,7 +2777,11 @@ function TerminalPanel({
               <p>
                 Ejecuta comandos reales en el servidor.
                 <br />
-                Prueba <code>node --version</code> para empezar.
+                Prueba{" "}
+                <code>
+                  {flutter ? "flutter analyze" : "node --version"}
+                </code>{" "}
+                para empezar.
               </p>
               <small>
                 Sesiones por comando · Sin entrada interactiva ni estado
@@ -2985,7 +3196,7 @@ function GitPanel({
           ))}
         </div>
       </div>
-      <div className="git-diff">
+      <div className={`git-diff ${selected ? "" : "empty"}`}>
         {selected ? (
           <>
             <div className="panel-heading">

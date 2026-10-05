@@ -274,7 +274,9 @@ export function listFiles(id: string): FileEntry[] {
       if (
         entry.isSymbolicLink() ||
         isProtectedName(entry.name) ||
-        ["dist", "build", "coverage", ".next", ".vite"].includes(entry.name)
+        ["dist", "build", "coverage", ".next", ".vite", ".dart_tool"].includes(
+          entry.name,
+        )
       )
         continue;
       const relative = prefix ? prefix + "/" + entry.name : entry.name;

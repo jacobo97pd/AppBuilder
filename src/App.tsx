@@ -847,7 +847,10 @@ function Dashboard({
               </div>
             </form>
           </section>
-          <section className="setup" aria-labelledby="setup-title">
+          <section
+            className={`setup ${completed === steps.length ? "complete" : ""}`}
+            aria-labelledby="setup-title"
+          >
             <div className="section-heading">
               <div>
                 <h2 id="setup-title">Tu estudio, paso a paso</h2>
