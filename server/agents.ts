@@ -55,6 +55,23 @@ type AgentInput = {
 };
 const activeProjects = new Set<string>();
 const execFileAsync = promisify(execFile);
+// Large repositories need many read/search/edit steps in a single task.
+const MAX_AGENT_TURNS = 200;
+const AGENT_TIMEOUT_MINUTES = 60;
+
+/** Explains why Claude stopped, so the person knows they can ask it to continue. */
+export function claudeStopReason(subtype: unknown, detail = ""): string {
+  if (subtype === "error_max_turns")
+    return `Claude llegó al límite de ${MAX_AGENT_TURNS} pasos en esta tarea. Lo que ya ha cambiado está guardado: escríbele «continúa» para que siga donde lo dejó.`;
+  if (subtype === "error_max_budget_usd")
+    return "Claude alcanzó el límite de gasto de esta tarea.";
+  if (subtype === "error_during_execution")
+    return (
+      detail ||
+      "Claude encontró un error mientras trabajaba. Revisa los cambios y pídele que continúe."
+    );
+  return detail || "Claude Code cerró la sesión sin completar la tarea.";
+}
 
 function codexExecutable(): string {
   const require = createRequire(import.meta.url);
@@ -479,7 +496,7 @@ async function runClaude(
       ...(supportsShellSandbox ? ["Bash"] : []),
     ],
     ...(session ? { resume: session } : {}),
-    maxTurns: 40,
+    maxTurns: MAX_AGENT_TURNS,
     systemPrompt: {
       type: "preset",
       preset: "claude_code",
@@ -551,7 +568,9 @@ async function runClaude(
       }
       if (event.type === "result") {
         if (event.subtype !== "success")
-          throw new Error(event.errors.join("\n") || event.subtype);
+          throw new Error(
+            claudeStopReason(event.subtype, event.errors.join("\n")),
+          );
         if (event.is_error)
           throw new Error(event.result || "Claude no pudo completar el turno.");
         completed = true;
@@ -593,7 +612,7 @@ async function runClaudeCode(
     "--permission-prompts",
     "none",
     "--max-turns",
-    "40",
+    String(MAX_AGENT_TURNS),
     "--output-format",
     "stream-json",
     "--verbose",
@@ -610,6 +629,7 @@ async function runClaudeCode(
   });
   let completed = false;
   let failure = "";
+  let stopReason: unknown;
   let stderr = "";
   const lines = createInterface({ input: child.stdout });
   lines.on("line", (line) => {
@@ -630,6 +650,7 @@ async function runClaudeCode(
           log(`→ ${item.name}\n`);
     if (event.type === "result") {
       completed = event.subtype === "success" && event.is_error !== true;
+      stopReason = event.subtype;
       if (completed && typeof event.result === "string")
         log(`${event.result}\n`);
       else if (typeof event.result === "string") failure = event.result;
@@ -653,8 +674,7 @@ async function runClaudeCode(
     if (signal.aborted) throw new Error("Tarea cancelada.");
     if (code !== 0 || !completed)
       throw new Error(
-        (failure || stderr).trim().slice(-1_000) ||
-          "Claude Code cerró la sesión sin completar la tarea.",
+        claudeStopReason(stopReason, (failure || stderr).trim().slice(-1_000)),
       );
   } finally {
     signal.removeEventListener("abort", abort);
@@ -775,9 +795,11 @@ export function mountAgentRoutes(
     const timeout = setTimeout(
       () =>
         controller.abort(
-          new Error("La tarea alcanzó el límite de 30 minutos."),
+          new Error(
+            `La tarea alcanzó el límite de ${AGENT_TIMEOUT_MINUTES} minutos. Lo hecho hasta ahora está guardado: pide al agente que continúe.`,
+          ),
         ),
-      30 * 60_000,
+      AGENT_TIMEOUT_MINUTES * 60_000,
     );
     timeout.unref();
     const saveSession = (id: string) => storeSession(filename, id);

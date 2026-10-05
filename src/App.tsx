@@ -14,6 +14,7 @@ import {
   CircleCheck,
   CircleHelp,
   Clock3,
+  Database,
   Folder,
   FolderGit2,
   Layers3,
@@ -31,7 +32,15 @@ import {
   X,
 } from "lucide-react";
 import { APP_VERSION } from "../version";
-import { api, errorMessage, isNative, post, serverUrl, setServer } from "./api";
+import {
+  api,
+  errorMessage,
+  forgetToken,
+  isNative,
+  post,
+  serverUrl,
+  setServer,
+} from "./api";
 import type { Connection, Project, ToastFn } from "./types";
 import {
   isTouchInput,
@@ -52,14 +61,16 @@ const Workspace = lazy(() =>
 import { Connections } from "./Connections";
 import { Builds } from "./Builds";
 import { GithubImport } from "./ImportProject";
+import { FirebasePage } from "./Firebase";
 
 type NewProjectMode = "template" | "github";
 
-type Page = "studio" | "projects" | "builds" | "connections";
+type Page = "studio" | "projects" | "builds" | "firebase" | "connections";
 const pages = [
   { id: "studio", label: "Mi estudio", icon: LayoutGrid },
   { id: "projects", label: "Proyectos", icon: Folder },
   { id: "builds", label: "Builds", icon: Layers3 },
+  { id: "firebase", label: "Firebase", icon: Database },
   { id: "connections", label: "Conexiones", icon: Plug },
 ] as const;
 const starters = [
@@ -85,6 +96,7 @@ const starters = [
   },
 ];
 const RECENT_PROJECTS = 5;
+const LAST_PROJECT_KEY = "appbuilder.lastProject";
 const agentNames: Record<string, string> = { codex: "Codex", claude: "Claude" };
 
 export function App() {
@@ -113,6 +125,7 @@ export function App() {
     (() => void) | null
   >(null);
   const [leaving, setLeaving] = useState(false);
+  const [serverVersion, setServerVersion] = useState("");
   // The sidebar shrinks to icons on tablets, and on laptops while a project
   // is open so the editor gets the extra width.
   const tablet = useMediaQuery("(min-width: 701px) and (max-width: 1099px)");
@@ -131,7 +144,10 @@ export function App() {
     ]);
     setProjects(p);
     setConnections(c);
+    return p;
   }, []);
+  // Read before any effect runs, so reopening the app returns to the project.
+  const lastProject = useRef(readStored(LAST_PROJECT_KEY));
   const connect = useCallback(async () => {
     setSession("loading");
     if (isNative && !serverUrl()) {
@@ -139,20 +155,47 @@ export function App() {
       return;
     }
     try {
-      const data = await api<{ authenticated: boolean }>("/session");
+      const data = await api<{ authenticated: boolean; version?: string }>(
+        "/session",
+      );
+      setServerVersion(data.version ?? "");
       if (!data.authenticated) {
+        // A remembered key that the server no longer accepts must go.
+        if (isNative) forgetToken();
         setSession("login");
         return;
       }
-      await refresh();
+      const list = await refresh();
+      const previous = list.find((item) => item.id === lastProject.current);
+      if (previous) setProject(previous);
       setSession("ready");
     } catch {
       setSession("offline");
     }
   }, [refresh]);
   useEffect(() => {
+    if (session !== "ready") return;
+    lastProject.current = project?.id ?? "";
+    writeStored(LAST_PROJECT_KEY, project?.id ?? "");
+  }, [session, project?.id]);
+  useEffect(() => {
     void connect();
   }, [connect]);
+  const versionGap = serverVersion
+    ? compareVersions(serverVersion, APP_VERSION)
+    : 0;
+  useEffect(() => {
+    // The UI can be newer than the server process (or the reverse in the
+    // native app); say so instead of failing on missing features.
+    if (session !== "ready" || !versionGap) return;
+    setToast({
+      kind: "error",
+      message:
+        versionGap < 0
+          ? `Tu servidor ejecuta AppBuilder ${serverVersion} y esta app es la ${APP_VERSION}. Reinicia el servidor en el ordenador para usar todas las funciones.`
+          : `Tu servidor ya tiene AppBuilder ${serverVersion}. Actualiza esta app para ver las novedades.`,
+    });
+  }, [session, versionGap, serverVersion]);
   useEffect(() => {
     if (toast) {
       const timer = setTimeout(() => setToast(null), 6000);
@@ -342,7 +385,10 @@ export function App() {
             <CircleHelp size={18} />
             <span>Guía de inicio</span>
           </button>
-          <div className="sidebar-version">AppBuilder v{APP_VERSION}</div>
+          <div className={`sidebar-version ${versionGap ? "mismatch" : ""}`}>
+            AppBuilder v{APP_VERSION}
+            {versionGap !== 0 && ` · servidor v${serverVersion}`}
+          </div>
         </div>
       </aside>
       <div className="app-body">
@@ -437,6 +483,13 @@ export function App() {
             refresh={refresh}
             notify={notify}
             onImport={importProject}
+            onOpenFirebase={() => navigate("firebase")}
+          />
+        ) : page === "firebase" ? (
+          <FirebasePage
+            connections={connections}
+            notify={notify}
+            onConnections={() => navigate("connections")}
           />
         ) : page === "builds" ? (
           <Builds
@@ -1246,6 +1299,7 @@ function ConnectScreen({
 }) {
   const [url, setUrl] = useState(serverUrl());
   const [token, setToken] = useState("");
+  const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit(e: React.FormEvent) {
@@ -1253,7 +1307,7 @@ function ConnectScreen({
     setBusy(true);
     setError("");
     try {
-      if (isNative) setServer(url, token);
+      if (isNative) setServer(url, token, remember);
       await post("/session", { token });
       await retry();
     } catch (e) {
@@ -1302,6 +1356,22 @@ function ConnectScreen({
               />
             </label>
           )}
+          {isNative && (
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              <span>
+                <strong>Recordar en este dispositivo</strong>
+                <small>
+                  Sigues conectado aunque el móvil cierre la app en segundo
+                  plano. Desactívalo en un dispositivo compartido.
+                </small>
+              </span>
+            </label>
+          )}
           {error && (
             <p className="inline-error" role="alert">
               {error}
@@ -1338,4 +1408,29 @@ function ConnectScreen({
       </div>
     </main>
   );
+}
+/** Negative when `a` is older than `b`, positive when newer, 0 when equal. */
+function compareVersions(a: string, b: string): number {
+  const left = a.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const right = b.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference) return Math.sign(difference);
+  }
+  return 0;
+}
+function readStored(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+function writeStored(key: string, value: string) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    /* Remembering where you were is optional. */
+  }
 }

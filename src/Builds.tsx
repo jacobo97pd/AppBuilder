@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  Apple,
   ArrowDownToLine,
   ArrowRight,
   Check,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { api, errorMessage, post } from "./api";
 import type { Build, Connection, Project, ToastFn } from "./types";
+import { IosAssistant } from "./IosAssistant";
 import { Empty, Modal, relativeDate, Spinner, Tag } from "./ui";
 
 const LAST_BUILD_KEY = "appbuilder.lastBuild";
@@ -48,6 +50,7 @@ export function Builds({
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [details, setDetails] = useState<Build | null>(null);
+  const [iosSetup, setIosSetup] = useState(false);
   const refresh = useCallback(async () => {
     if (!connected) return;
     setLoading(true);
@@ -116,6 +119,22 @@ export function Builds({
           </div>
         </li>
       </ol>
+      <section className="ios-card">
+        <span>
+          <Apple size={22} />
+        </span>
+        <div>
+          <strong>Prepara la publicación en App Store</strong>
+          <small>
+            Registra el Bundle ID, crea el perfil de distribución y genera el
+            codemagic.yaml de tus apps de Flutter sin salir del estudio.
+          </small>
+        </div>
+        <button className="button secondary" onClick={() => setIosSetup(true)}>
+          Abrir asistente
+          <ArrowRight size={16} />
+        </button>
+      </section>
       <section className="builds-list">
         <div className="section-heading">
           <h2>
@@ -234,6 +253,18 @@ export function Builds({
             setCreating(false);
             await refresh();
             notify("Build enviada a Codemagic.");
+          }}
+        />
+      )}
+      {iosSetup && (
+        <IosAssistant
+          projects={projects}
+          connections={connections}
+          notify={notify}
+          onClose={() => setIosSetup(false)}
+          onConnections={() => {
+            setIosSetup(false);
+            onConnections();
           }}
         />
       )}

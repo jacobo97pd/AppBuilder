@@ -21,7 +21,7 @@ export type Provider = "codex" | "claude";
 export type CodexAuthMode = "api" | "chatgpt" | "disabled";
 export type ClaudeAuthMode = "api" | "claude_code" | "disabled";
 export type ConnectionId =
-  Provider | "codemagic" | "apple" | "google" | "github";
+  Provider | "codemagic" | "apple" | "google" | "github" | "firebase";
 type Credentials = Record<string, string>;
 type ConnectionField = {
   key: string;
@@ -106,6 +106,19 @@ const definitions: Record<ConnectionId, ConnectionDefinition> = {
       },
     ],
     env: { serviceAccountJson: "GOOGLE_SERVICE_ACCOUNT_JSON" },
+  },
+  firebase: {
+    name: "Firebase",
+    description: "Firestore de tu proyecto con una cuenta de servicio",
+    fields: [
+      {
+        key: "serviceAccountJson",
+        label: "JSON de cuenta de servicio de Firebase",
+        secret: true,
+        placeholder: '{ "type": "service_account", "project_id": … }',
+      },
+    ],
+    env: { serviceAccountJson: "FIREBASE_SERVICE_ACCOUNT_JSON" },
   },
   github: {
     name: "GitHub",
@@ -357,6 +370,13 @@ export function saveCredentials(id: ConnectionId, input: unknown) {
   if (definitions[id].fields.some((field) => !effective[field.key]))
     throw new IntegrationError("Completa todos los campos del conector.");
   if (id === "google") parseServiceAccount(effective.serviceAccountJson);
+  if (
+    id === "firebase" &&
+    !parseServiceAccount(effective.serviceAccountJson).project_id
+  )
+    throw new IntegrationError(
+      "El JSON de la cuenta de servicio no indica el project_id de Firebase.",
+    );
   if (id === "apple" && !effective.privateKey.includes("BEGIN PRIVATE KEY"))
     throw new IntegrationError(
       "La clave de Apple debe estar en formato PEM (.p8).",
@@ -438,6 +458,9 @@ function supportedEfforts(value: any, allowed: string[]): string[] {
   );
 }
 
+// Levels accepted by `claude --effort`; the CLI checks each model when it runs.
+const claudeCodeEfforts = ["low", "medium", "high", "xhigh", "max"];
+
 export async function discoverModels(
   provider: Provider,
 ): Promise<ModelDiscovery> {
@@ -452,13 +475,13 @@ export async function discoverModels(
         {
           id: "sonnet",
           name: "Claude Sonnet",
-          efforts: ["low", "medium", "high"],
+          efforts: claudeCodeEfforts,
           speeds: ["standard"],
         },
         {
           id: "opus",
           name: "Claude Opus",
-          efforts: ["low", "medium", "high"],
+          efforts: claudeCodeEfforts,
           speeds: ["standard"],
         },
         {
@@ -574,7 +597,7 @@ export async function discoverModels(
   return data;
 }
 
-async function appleToken(
+export async function appleToken(
   credentials = readCredentials("apple"),
 ): Promise<string> {
   try {
@@ -596,10 +619,11 @@ async function appleToken(
   }
 }
 
-function parseServiceAccount(json: string): {
+export function parseServiceAccount(json: string): {
   client_email: string;
   private_key: string;
   private_key_id?: string;
+  project_id?: string;
 } {
   try {
     const value = JSON.parse(json);
@@ -618,14 +642,23 @@ function parseServiceAccount(json: string): {
 }
 
 async function googleToken(): Promise<string> {
-  const account = parseServiceAccount(
+  return googleAccessToken(
     readCredentials("google").serviceAccountJson,
+    "https://www.googleapis.com/auth/androidpublisher",
   );
+}
+
+/** OAuth access token for a Google service account and the given scopes. */
+export async function googleAccessToken(
+  serviceAccountJson: string,
+  scope: string,
+): Promise<string> {
+  const account = parseServiceAccount(serviceAccountJson);
   let assertion: string;
   try {
     const key = await importPKCS8(account.private_key, "RS256");
     assertion = await new SignJWT({
-      scope: "https://www.googleapis.com/auth/androidpublisher",
+      scope,
     })
       .setProtectedHeader({
         alg: "RS256",
@@ -776,6 +809,27 @@ export function createIntegrationsRouter(): Router {
             },
           },
         );
+      } else if (id === "firebase") {
+        const projectId = parseServiceAccount(
+          credentials.serviceAccountJson,
+        ).project_id;
+        const token = await googleAccessToken(
+          credentials.serviceAccountJson,
+          "https://www.googleapis.com/auth/datastore",
+        );
+        const result = await providerRequest(
+          `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId ?? "")}/databases/(default)/documents:listCollectionIds`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ pageSize: 300 }),
+          },
+        );
+        const count = (result.collectionIds ?? []).length;
+        message = `Conectado a ${projectId}. ${count} ${count === 1 ? "colección" : "colecciones"} en Firestore.`;
       } else if (id === "google") {
         await googleToken();
         message =

@@ -92,7 +92,7 @@ function mockProvider(
 
 test("missing credentials and unknown connectors produce explicit errors", async () => {
   const connections = await api("/connections");
-  assert.equal(connections.body.length, 6);
+  assert.equal(connections.body.length, 7);
   assert(
     connections.body.every(
       (connection: any) => connection.status === "missing",

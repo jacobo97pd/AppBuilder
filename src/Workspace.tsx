@@ -27,6 +27,7 @@ import {
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  Hammer,
   Info,
   Monitor,
   PanelRightClose,
@@ -44,7 +45,7 @@ import {
   Terminal as TerminalIcon,
   Trash2,
 } from "lucide-react";
-import { api, errorMessage, post } from "./api";
+import { api, errorMessage, post, serverUrl } from "./api";
 import type {
   Connection,
   FileEntry,
@@ -72,6 +73,59 @@ const EXPANDED_TREE_LIMIT = 120;
 // The server lists at most this many entries per project.
 const LISTED_ENTRIES_LIMIT = 20_000;
 const PUSH_AFTER_COMMIT_KEY = "appbuilder.pushAfterCommit";
+/** Provider effort ids in plain Spanish, from lightest to deepest. */
+const effortLabels: Record<string, string> = {
+  minimal: "Mínimo",
+  low: "Bajo",
+  medium: "Medio",
+  high: "Alto",
+  xhigh: "Muy alto",
+  max: "Máximo",
+  ultra: "Ultra",
+  persistent: "Persistente",
+};
+const deepEfforts = new Set(["xhigh", "max", "ultra", "persistent"]);
+const TAB_KEY = "appbuilder.tab";
+const DRAFT_KEY = "appbuilder.agentDraft";
+const AGENT_PREFERENCES_KEY = "appbuilder.agent";
+const tabIds = ["code", "agent", "preview", "terminal", "git"];
+
+function readLocal(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+function writeLocal(key: string, value: string) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    /* Preferences are optional; the studio works without storage. */
+  }
+}
+function savedTab(projectId: string): Tab {
+  const value = readLocal(`${TAB_KEY}.${projectId}`);
+  return tabIds.includes(value) ? (value as Tab) : "code";
+}
+type ModelChoice = { model?: string; effort?: string };
+type AgentPreferences = {
+  provider?: string;
+  choices: Record<string, ModelChoice>;
+};
+function agentPreferences(): AgentPreferences {
+  try {
+    const value = JSON.parse(readLocal(AGENT_PREFERENCES_KEY) || "{}");
+    return {
+      provider: typeof value.provider === "string" ? value.provider : undefined,
+      choices:
+        value.choices && typeof value.choices === "object" ? value.choices : {},
+    };
+  } catch {
+    return { choices: {} };
+  }
+}
 
 function lastOutputLine(output: string): string {
   return (
@@ -119,8 +173,14 @@ export function Workspace({
   onDeleted: () => void;
   registerGuard?: (save: (() => Promise<boolean>) | null) => void;
 }) {
-  // A project created from an idea opens on the agent, with the idea ready to send.
-  const [tab, setTab] = useState<Tab>(initialPrompt ? "agent" : "code");
+  // A project created from an idea opens on the agent, with the idea ready to
+  // send; otherwise reopen the tab that was in use for this project.
+  const [tab, setTab] = useState<Tab>(() =>
+    initialPrompt ? "agent" : savedTab(project.id),
+  );
+  useEffect(() => {
+    writeLocal(`${TAB_KEY}.${project.id}`, tab);
+  }, [project.id, tab]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activeFile, setActiveFile] = useState("");
   const [content, setContent] = useState("");
@@ -138,13 +198,31 @@ export function Workspace({
   const treeReady = useRef(false);
   const [settings, setSettings] = useState(false);
   const [pendingFile, setPendingFile] = useState<string | null>(null);
-  const [agentDraft, setAgentDraft] = useState<AgentDraft>({
-    provider: "codex",
-    model: "",
-    effort: "",
-    speed: "",
-    prompt: initialPrompt,
+  const [agentDraft, setAgentDraft] = useState<AgentDraft>(() => {
+    // Keep the chosen model and effort, and any unsent message, across
+    // app restarts (phones close apps in the background).
+    const preferences = agentPreferences();
+    const provider = preferences.provider === "claude" ? "claude" : "codex";
+    return {
+      provider,
+      model: preferences.choices[provider]?.model ?? "",
+      effort: preferences.choices[provider]?.effort ?? "",
+      speed: "",
+      prompt: initialPrompt || readLocal(`${DRAFT_KEY}.${project.id}`) || "",
+    };
   });
+  useEffect(() => {
+    writeLocal(`${DRAFT_KEY}.${project.id}`, agentDraft.prompt);
+  }, [project.id, agentDraft.prompt]);
+  useEffect(() => {
+    const preferences = agentPreferences();
+    preferences.provider = agentDraft.provider;
+    preferences.choices[agentDraft.provider] = {
+      model: agentDraft.model,
+      effort: agentDraft.effort,
+    };
+    writeLocal(AGENT_PREFERENCES_KEY, JSON.stringify(preferences));
+  }, [agentDraft.provider, agentDraft.model, agentDraft.effort]);
   const [agentStarting, setAgentStarting] = useState(false);
   const [branch, setBranch] = useState("?");
   const [pendingChanges, setPendingChanges] = useState(0);
@@ -295,9 +373,15 @@ export function Workspace({
     };
     void refreshJobs();
     const timer = setInterval(refreshJobs, 1500);
+    // Back from the background: show the agent's progress straight away.
+    const resume = () => {
+      if (document.visibilityState === "visible") void refreshJobs();
+    };
+    document.addEventListener("visibilitychange", resume);
     return () => {
       stopped = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", resume);
     };
   }, [project.id]);
   const previousRunning = useRef(false);
@@ -756,6 +840,8 @@ export function Workspace({
             dirty={dirty}
             onSave={save}
             notify={notify}
+            jobs={jobs}
+            onStart={onStart}
           />
         )}
         {tab === "terminal" && (
@@ -1107,13 +1193,30 @@ function AgentPanel({
   const followOutput = useRef(true);
   const touch = useMemo(isTouchInput, []);
   const setProvider = (provider: string) =>
-    setDraft((current) =>
-      current.provider === provider
-        ? current
-        : { ...current, provider, model: "", effort: "", speed: "" },
-    );
+    setDraft((current) => {
+      if (current.provider === provider) return current;
+      // Each provider remembers its own last model and effort.
+      const choice = agentPreferences().choices[provider] ?? {};
+      return {
+        ...current,
+        provider,
+        model: choice.model ?? "",
+        effort: choice.effort ?? "",
+        speed: "",
+      };
+    });
   const setModel = (model: string) =>
-    setDraft((current) => ({ ...current, model, effort: "", speed: "" }));
+    setDraft((current) => ({
+      ...current,
+      model,
+      // Keep the chosen effort when the new model also offers it.
+      effort: models
+        .find((candidate) => candidate.id === model)
+        ?.efforts.includes(current.effort)
+        ? current.effort
+        : "",
+      speed: "",
+    }));
   const setEffort = (effort: string) =>
     setDraft((current) => ({ ...current, effort }));
   const setSpeed = (speed: string) =>
@@ -1401,7 +1504,7 @@ function AgentPanel({
                   <option value="">Automático</option>
                   {activeModel.efforts.map((e) => (
                     <option key={e} value={e}>
-                      {e}
+                      {effortLabels[e] ?? e}
                     </option>
                   ))}
                 </select>
@@ -1429,6 +1532,13 @@ function AgentPanel({
         )}
         {modelMessage && connected && (
           <p className="model-message">{modelMessage}</p>
+        )}
+        {connected && deepEfforts.has(effort) && (
+          <p className="model-message deep-effort">
+            <Sparkles size={13} /> Razonamiento{" "}
+            {(effortLabels[effort] ?? effort).toLowerCase()}: piensa más a
+            fondo, tarda más y consume más cuota de tu plan.
+          </p>
         )}
         <div className="agent-prompt">
           <textarea
@@ -1489,7 +1599,338 @@ function AgentPanel({
   );
 }
 
+type FlutterStatus = {
+  flutter: boolean;
+  sdk: string | null;
+  needsWeb: boolean;
+  builtAt: string | null;
+  url: string | null;
+  job: Job | null;
+};
+
+/** Imported Flutter apps get a web build preview; everything else is static. */
 function Preview({
+  project,
+  revision,
+  dirty,
+  onSave,
+  notify,
+  jobs,
+  onStart,
+}: {
+  project: Project;
+  revision: number;
+  dirty: boolean;
+  onSave: () => Promise<boolean>;
+  notify: ToastFn;
+  jobs: Job[];
+  onStart: (job: Job) => void;
+}) {
+  const repository = project.template === "repo";
+  const [flutter, setFlutter] = useState<FlutterStatus | null>(null);
+  const [checked, setChecked] = useState(!repository);
+  useEffect(() => {
+    if (!repository) return;
+    let stopped = false;
+    api<FlutterStatus>(`/projects/${project.id}/flutter`)
+      .then((status) => {
+        if (!stopped) setFlutter(status);
+      })
+      .catch(() => {
+        /* Not available: fall back to the static preview. */
+      })
+      .finally(() => {
+        if (!stopped) setChecked(true);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [project.id, repository, revision]);
+  if (!checked)
+    return (
+      <div className="preview-panel">
+        <div className="preview-loading">
+          <Spinner />
+          <p>Preparando la vista previa…</p>
+        </div>
+      </div>
+    );
+  if (flutter?.flutter)
+    return (
+      <FlutterPreview
+        project={project}
+        status={flutter}
+        dirty={dirty}
+        onSave={onSave}
+        notify={notify}
+        jobs={jobs}
+        onStart={onStart}
+      />
+    );
+  return (
+    <WebPreview
+      project={project}
+      revision={revision}
+      dirty={dirty}
+      onSave={onSave}
+      notify={notify}
+    />
+  );
+}
+
+function useConsoleLogs(frame: React.RefObject<HTMLIFrameElement | null>) {
+  const [logs, setLogs] = useState<{ level: string; text: string }[]>([]);
+  useEffect(() => {
+    const message = (e: MessageEvent) => {
+      if (
+        e.source === frame.current?.contentWindow &&
+        e.data?.type === "appbuilder:console" &&
+        typeof e.data.text === "string"
+      )
+        setLogs((v) => [
+          ...v.slice(-99),
+          { level: e.data.level, text: e.data.text.slice(0, 4000) },
+        ]);
+    };
+    window.addEventListener("message", message);
+    return () => window.removeEventListener("message", message);
+  }, [frame]);
+  return [logs, setLogs] as const;
+}
+
+function FlutterPreview({
+  project,
+  status,
+  dirty,
+  onSave,
+  notify,
+  jobs,
+  onStart,
+}: {
+  project: Project;
+  status: FlutterStatus;
+  dirty: boolean;
+  onSave: () => Promise<boolean>;
+  notify: ToastFn;
+  jobs: Job[];
+  onStart: (job: Job) => void;
+}) {
+  const [device, setDevice] = useState<"mobile" | "desktop">("mobile");
+  const [starting, setStarting] = useState(false);
+  const [reload, setReload] = useState(0);
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [logs, setLogs] = useConsoleLogs(frame);
+  const job =
+    jobs.find(
+      (item) => item.kind === "build" && item.title.startsWith("Flutter"),
+    ) ?? status.job;
+  const building = job?.status === "running";
+  const failed =
+    !building &&
+    job?.status === "failed" &&
+    (!status.builtAt || job.createdAt > status.builtAt);
+  const errors = logs.filter((log) => log.level === "error").length;
+  async function build() {
+    setStarting(true);
+    try {
+      if (dirty && !(await onSave())) return;
+      onStart(await post<Job>(`/projects/${project.id}/flutter/build`));
+      setLogs([]);
+    } catch (e) {
+      notify(errorMessage(e), "error");
+    } finally {
+      setStarting(false);
+    }
+  }
+  const source = status.url
+    ? `${serverUrl()}${status.url}?v=${encodeURIComponent(`${status.builtAt}-${reload}`)}`
+    : "";
+  const tail = (job?.output ?? "").trim().split("\n").slice(-12).join("\n");
+  return (
+    <div className="preview-panel">
+      <div className="preview-toolbar">
+        <div className="device-switch" role="group" aria-label="Dispositivo">
+          <button
+            className={device === "mobile" ? "active" : ""}
+            aria-label="Vista móvil"
+            aria-pressed={device === "mobile"}
+            title="Vista móvil"
+            onClick={() => setDevice("mobile")}
+          >
+            <Smartphone size={16} />
+          </button>
+          <button
+            className={device === "desktop" ? "active" : ""}
+            aria-label="Vista escritorio"
+            aria-pressed={device === "desktop"}
+            title="Vista escritorio"
+            onClick={() => setDevice("desktop")}
+          >
+            <Monitor size={16} />
+          </button>
+        </div>
+        <span className="preview-address">
+          <span className="flutter-mark" aria-hidden="true">
+            ◆
+          </span>
+          {status.builtAt
+            ? `Flutter · compilado ${relativeDate(status.builtAt).toLowerCase()}`
+            : "Flutter · sin compilar"}
+        </span>
+        {status.url && !building && (
+          <button
+            className="icon-button"
+            aria-label="Reiniciar la app"
+            title="Reiniciar la app"
+            onClick={() => setReload((value) => value + 1)}
+          >
+            <RotateCcw size={16} />
+          </button>
+        )}
+        <button
+          className="button small primary"
+          disabled={building || starting || !status.sdk}
+          onClick={() => void build()}
+        >
+          {building || starting ? <Spinner /> : <Hammer size={15} />}
+          {status.url ? "Recompilar" : "Compilar"}
+        </button>
+      </div>
+      {dirty && (
+        <div className="preview-unsaved">
+          <CircleAlert size={16} />
+          <span>Tienes cambios sin guardar. Recompilar los guardará.</span>
+        </div>
+      )}
+      <div className={`preview-stage ${device}`}>
+        {!status.sdk ? (
+          <Empty
+            icon={<Hammer size={28} />}
+            title="Flutter no está instalado en el servidor"
+            action={
+              <a
+                className="button secondary"
+                href="https://docs.flutter.dev/get-started/install"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Cómo instalar Flutter
+              </a>
+            }
+          >
+            Instala el SDK de Flutter en el ordenador que ejecuta AppBuilder,
+            añádelo al PATH y reinicia el servidor para ver aquí tus apps.
+          </Empty>
+        ) : building ? (
+          <div className="flutter-building">
+            <div className="import-progress-head">
+              <Spinner />
+              <div>
+                <strong>Compilando {project.name} para la web…</strong>
+                <small>
+                  La primera vez tarda uno o dos minutos; después es más rápido.
+                  Puedes seguir trabajando mientras tanto.
+                </small>
+              </div>
+            </div>
+            <pre className="import-log">{tail || "Preparando Flutter…"}</pre>
+          </div>
+        ) : failed ? (
+          <div className="flutter-building">
+            <div className="import-progress-head failed">
+              <CircleAlert size={20} />
+              <div>
+                <strong>La compilación falló</strong>
+                <small>
+                  Corrige los errores (o pídeselo al agente) y vuelve a
+                  compilar.
+                </small>
+              </div>
+            </div>
+            <pre className="import-log">{tail}</pre>
+          </div>
+        ) : !source ? (
+          <Empty
+            icon={<Smartphone size={28} />}
+            title="Mira tu app de Flutter aquí"
+            action={
+              <button
+                className="button primary"
+                disabled={starting}
+                onClick={() => void build()}
+              >
+                {starting ? <Spinner /> : <Hammer size={16} />} Compilar vista
+                previa
+              </button>
+            }
+          >
+            AppBuilder compila la app para la web en tu servidor y la muestra en
+            formato móvil.
+            {status.needsWeb &&
+              " Como el proyecto aún no tiene soporte web, se añadirá la carpeta web/."}
+          </Empty>
+        ) : (
+          <div className={`preview-device ${device}`}>
+            {device === "mobile" && (
+              <div className="phone-top">
+                <span>9:41</span>
+                <div />
+                <span>••• ▰</span>
+              </div>
+            )}
+            <iframe
+              key={source}
+              ref={frame}
+              title="Vista previa del proyecto"
+              sandbox="allow-scripts allow-forms allow-popups allow-pointer-lock"
+              src={source}
+            />
+            {device === "mobile" && (
+              <div className="phone-bottom">
+                <span />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="preview-console">
+        <div>
+          <TerminalIcon size={14} />
+          <strong>Consola</strong>
+          <span>
+            {logs.length} {logs.length === 1 ? "mensaje" : "mensajes"}
+          </span>
+          {errors > 0 && (
+            <Tag tone="danger">
+              {errors} {errors === 1 ? "error" : "errores"}
+            </Tag>
+          )}
+          <button onClick={() => setLogs([])} disabled={!logs.length}>
+            Limpiar
+          </button>
+        </div>
+        <section>
+          {logs.length ? (
+            logs.map((log, i) => (
+              <p className={log.level} key={i}>
+                {log.text}
+              </p>
+            ))
+          ) : (
+            <p>Los mensajes de tu app (print y errores) aparecerán aquí.</p>
+          )}
+        </section>
+      </div>
+      <div className="preview-note">
+        <Monitor size={14} />
+        Vista previa web de Flutter · Los plugins nativos (cámara, Bluetooth,
+        notificaciones…) solo funcionan en una build de dispositivo.
+      </div>
+    </div>
+  );
+}
+
+function WebPreview({
   project,
   revision,
   dirty,

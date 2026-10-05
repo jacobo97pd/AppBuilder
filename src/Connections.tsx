@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Braces,
+  Database,
   FolderGit2,
   GitBranch as Github,
   Globe2,
@@ -77,6 +78,15 @@ const metadata: Record<
     color: "amber",
     icon: Smartphone,
   },
+  firebase: {
+    category: "BASE DE DATOS",
+    description:
+      "Explora y edita Firestore de tu app: colecciones, documentos y subcolecciones.",
+    label: "Google",
+    docs: "https://firebase.google.com/docs/admin/setup#initialize_the_sdk_in_non-google_environments",
+    color: "amber",
+    icon: Database,
+  },
   github: {
     category: "CÓDIGO FUENTE",
     description:
@@ -100,17 +110,25 @@ const groups = [
     text: "Compila tu app, consulta las tiendas y accede a tus repositorios.",
     ids: ["codemagic", "apple", "google", "github"],
   },
+  {
+    id: "data",
+    title: "Datos",
+    text: "La base de datos de tus apps, para consultar y corregir datos al momento.",
+    ids: ["firebase"],
+  },
 ];
 export function Connections({
   connections,
   refresh,
   notify,
   onImport,
+  onOpenFirebase,
 }: {
   connections: Connection[];
-  refresh: () => Promise<void>;
+  refresh: () => Promise<unknown>;
   notify: ToastFn;
   onImport: () => void;
+  onOpenFirebase: () => void;
 }) {
   const [editing, setEditing] = useState<Connection | null>(null);
   const [testing, setTesting] = useState("");
@@ -277,6 +295,15 @@ export function Connections({
                             >
                               <FolderGit2 size={15} />
                               Importar repositorio
+                            </button>
+                          )}
+                          {c.id === "firebase" && (
+                            <button
+                              className="button small primary"
+                              onClick={onOpenFirebase}
+                            >
+                              <Database size={15} />
+                              Abrir Firestore
                             </button>
                           )}
                           {["apple", "google"].includes(c.id) && (
@@ -457,6 +484,20 @@ function ConnectionModal({
               {connection.id === "codex"
                 ? "Esta opción usa una API key con facturación independiente. Para usar tu suscripción, pulsa «Usar cuenta ChatGPT» en la tarjeta de Codex."
                 : "Esta opción usa una API key con facturación independiente. Para usar Claude Code instalado e iniciado en tu ordenador, pulsa «Usar Claude Code» en la tarjeta de Claude."}
+            </p>
+          </div>
+        )}
+        {connection.id === "firebase" && (
+          <div className="notice">
+            <KeyRound size={17} />
+            <p>
+              En la consola de Firebase abre{" "}
+              <strong>
+                Configuración del proyecto → Cuentas de servicio → Generar nueva
+                clave privada
+              </strong>{" "}
+              y pega aquí el contenido del archivo JSON. Da acceso completo a
+              Firestore: guárdalo solo en tu servidor.
             </p>
           </div>
         )}

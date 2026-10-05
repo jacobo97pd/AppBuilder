@@ -2,7 +2,7 @@
 
 **Versión 0.1.4**
 
-Entorno personal de desarrollo diseñado para móvil, tablet y escritorio. Interfaz en español, proyectos reales en disco, editor CodeMirror, agentes Codex/Claude, terminal, vista previa web y conexión a Codemagic.
+Entorno personal de desarrollo diseñado para móvil, tablet y escritorio. Interfaz en español, proyectos reales en disco, editor CodeMirror, agentes Codex/Claude, terminal, vista previa web y de Flutter, explorador de Firestore, asistente de publicación iOS y conexión a Codemagic.
 
 ## Ejecutar
 
@@ -22,21 +22,23 @@ Abre **http://127.0.0.1:4310**. Se crea automáticamente un proyecto editable, *
 - Explorar, crear, editar y guardar archivos con autocompletado. Protección de cambios sin guardar y conflictos con el archivo del servidor.
 - Terminal por comandos con stdout/stderr real, historial persistente, cancelación de procesos secundarios, cuatro tareas simultáneas y límite de duración. **No es un PTY interactivo**: usa comandos no interactivos o encadena operaciones en un mismo comando; `cd` no persiste entre trabajos.
 - Vista previa del HTML o React guardado, recompilación y consola. El iframe tiene origen aislado y no comparte credenciales ni almacenamiento con el editor. Las plantillas usan memoria cuando el navegador restringe localStorage; el estado de la app de ejemplo puede reiniciarse al actualizar la preview.
+- Tareas en segundo plano: el agente, la terminal y las compilaciones se ejecutan en el servidor, así que siguen aunque cierres la app o el móvil bloquee la pantalla. Al volver, el estudio recupera el proyecto, la pestaña, el borrador del mensaje y el modelo y esfuerzo elegidos para cada agente, y actualiza el estado de las tareas. Cada tarea del agente admite hasta 200 pasos y 60 minutos; si llega al límite, lo hecho queda guardado y basta con pedirle que continúe.
 - Git: estado, diferencias por archivo, commits, restauración de archivos y checkpoint automático antes de tareas de IA. En proyectos importados: traer cambios (solo avance rápido), subir la rama actual y ver los commits pendientes en cada sentido.
 - Integraciones reales mediante la cuenta ChatGPT iniciada en Codex o las claves que añadas en **Conexiones**. Nunca se simulan respuestas de proveedores.
 - PWA instalable y proyectos Capacitor para Android/iOS con interfaz empaquetada y configuración de servidor HTTPS.
 
-| Conector          | Implementado                                                                          | Necesita configuración externa                                                               |
-| ----------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Codex             | SDK oficial, tareas, sesiones, archivos, comandos, cancelación y uso de tokens        | Sesión ChatGPT de Codex en el servidor o API key de OpenAI; acceso al modelo elegido         |
-| Claude            | Claude Code local o Agent SDK con API, tareas, sesiones y herramientas de archivos    | Sesión claude.ai de Claude Code en el servidor o API key de Anthropic                        |
-| Modelos           | Catálogo de la cuenta; esfuerzo únicamente cuando hay metadatos del proveedor/runtime | La velocidad disponible en estos adaptadores es estándar; no hay un selector rápido ficticio |
-| Codemagic         | Iniciar/cancelar builds, consultar estados y enlaces a artefactos y registros         | Token, repositorio registrado, App ID, workflow y rama remota                                |
-| App Store Connect | Autenticación JWT y consulta de apps                                                  | Issuer ID, Key ID, clave .p8 y permisos de la cuenta                                         |
-| Google Play       | Cuenta de servicio, consulta de canales y versiones                                   | API habilitada, permisos y package name existente                                            |
-| GitHub            | Elegir repositorios, importarlos (clonar) y sincronizar con pull/push                 | Token fine-grained con «Contents: Read and write», o una sesión de Git en el servidor        |
+| Conector          | Implementado                                                                                       | Necesita configuración externa                                                               |
+| ----------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Codex             | SDK oficial, tareas, sesiones, archivos, comandos, cancelación y uso de tokens                     | Sesión ChatGPT de Codex en el servidor o API key de OpenAI; acceso al modelo elegido         |
+| Claude            | Claude Code local o Agent SDK con API, tareas, sesiones y herramientas de archivos                 | Sesión claude.ai de Claude Code en el servidor o API key de Anthropic                        |
+| Modelos           | Catálogo de la cuenta; esfuerzo según el modelo (Ultra en Codex, Muy alto y Máximo en Claude Code) | La velocidad disponible en estos adaptadores es estándar; no hay un selector rápido ficticio |
+| Codemagic         | Iniciar/cancelar builds, consultar estados y enlaces a artefactos y registros                      | Token, repositorio registrado, App ID, workflow y rama remota                                |
+| App Store Connect | Consulta de apps y asistente iOS: Bundle ID, perfil de App Store y `codemagic.yaml`                | Issuer ID, Key ID, clave .p8 con rol App Manager o Admin                                     |
+| Google Play       | Cuenta de servicio, consulta de canales y versiones                                                | API habilitada, permisos y package name existente                                            |
+| GitHub            | Elegir repositorios, importarlos (clonar) y sincronizar con pull/push                              | Token fine-grained con «Contents: Read and write», o una sesión de Git en el servidor        |
+| Firebase          | Explorar colecciones y subcolecciones de Firestore; crear, editar y borrar documentos              | JSON de una cuenta de servicio del proyecto con acceso a Cloud Firestore                     |
 
-La publicación final en tiendas, gestión completa de certificados, firma y subida de binarios no están implementadas. Los proyectos creados desde plantilla no se publican en GitHub por sí solos: puedes añadir un remoto desde la terminal (`git remote add origin URL`) y, a partir de ahí, usar los botones de sincronización. Codemagic compila la rama del repositorio remoto, no los archivos sin subir del estudio.
+AppBuilder no crea certificados de distribución, no crea la ficha de la app en App Store Connect (Apple no lo permite por API) ni sube binarios: el asistente iOS prepara lo demás y la firma y subida las hace Codemagic con el `codemagic.yaml` generado. Los proyectos creados desde plantilla no se publican en GitHub por sí solos: puedes añadir un remoto desde la terminal (`git remote add origin URL`) y, a partir de ahí, usar los botones de sincronización. Codemagic compila la rama del repositorio remoto, no los archivos sin subir del estudio.
 
 ## Trabajar con repositorios de GitHub
 
@@ -50,6 +52,23 @@ Pulsa **Importar de GitHub** (barra lateral, inicio o Proyectos). Si GitHub est�
 
 Solo se importan direcciones HTTPS. El explorador muestra hasta 20.000 elementos, con carpetas plegables, y el editor abre archivos de texto de hasta 2 MB.
 
+## Apps de Flutter
+
+Los proyectos con un `pubspec.yaml` que depende de Flutter muestran en **Vista previa** un teléfono con la app compilada para web. Pulsa **Compilar vista previa**: el servidor ejecuta `flutter build web` como una tarea que puedes seguir y cancelar, y la sirve en un origen aislado sin acceso al estudio. Si el proyecto no tiene la carpeta `web/`, la primera compilación la crea con `flutter create --platforms=web .` (solo añade `web/` y actualiza `.metadata`; aparecerá en Cambios). Hace falta el SDK de Flutter en el PATH del usuario que ejecuta el servidor. Es la versión web: los plugins que solo existen en Android o iOS no funcionan en ella.
+
+En **Builds → Abrir asistente** se prepara la publicación en App Store a partir de la conexión de App Store Connect:
+
+1. Lee el Bundle ID y el nombre de la app del proyecto de Xcode de la app de Flutter (o escríbelos a mano).
+2. Comprueba en Apple el Bundle ID, los certificados de distribución, el perfil de App Store y la ficha de la app.
+3. Registra el Bundle ID y crea el perfil de App Store con un botón.
+4. Genera un `codemagic.yaml` con el workflow `ios-release` (firma automática, IPA para TestFlight y, si la ficha de la app ya existe, número de build automático) y un APK de prueba. Guárdalo con un commit, súbelo y lanza el workflow en Codemagic.
+
+El certificado de distribución se genera una sola vez desde Codemagic (Team settings → Code signing identities), que guarda su clave privada, y sirve para todas tus apps. La ficha de la app se crea una vez en App Store Connect; el asistente enlaza allí.
+
+## Firebase
+
+Conecta **Firebase** en Conexiones pegando el JSON de una cuenta de servicio (Consola de Firebase → Configuración del proyecto → Cuentas de servicio → Generar nueva clave privada). La página **Firebase** permite recorrer colecciones y subcolecciones, y crear, editar y borrar documentos de Cloud Firestore. Los tipos especiales se escriben como `{"$timestamp": "2026-01-31T10:00:00Z"}`, `{"$reference": "usuarios/ana"}`, `{"$geopoint": {...}}`, `{"$bytes": "..."}` o `{"$double": 3}`. Guardar sustituye el documento completo. Una cuenta de servicio tiene acceso total a la base de datos y no pasa por las reglas de seguridad: AppBuilder la guarda cifrada como el resto de credenciales.
+
 ## Conexiones y almacenamiento
 
 Para usar Codex con tu plan ChatGPT, inicia sesión en **el ordenador que ejecuta el servidor** mediante `codex login` y pulsa **Usar cuenta ChatGPT** en Conexiones. AppBuilder fuerza ese modo de autenticación y no entrega una API key al SDK. La modalidad de API key es opcional y tiene facturación aparte. La sesión ChatGPT debe mantenerse activa en ese ordenador.
@@ -62,7 +81,7 @@ La terminal de AppBuilder también puede ejecutar comandos no interactivos del C
 
 Configura las demás claves en la interfaz o copia `.env.example` a `.env`. Las credenciales introducidas en la interfaz se cifran con AES-256-GCM. Por defecto, la clave maestra está en el mismo servidor: el cifrado no protege frente a alguien con acceso completo a ese equipo. Para separar la clave, configura `APPBUILDER_VAULT_KEY` con 32 bytes aleatorios en base64.
 
-El servidor escucha solamente en `127.0.0.1`. El acceso remoto exige un token de al menos 32 caracteres, `APPBUILDER_PUBLIC_ORIGIN` HTTPS y un proxy TLS. La app nativa pide URL HTTPS y token; guarda la URL y conserva el token solo durante la sesión. Consulta [despliegue y móvil](docs/DEPLOYMENT.md).
+El servidor escucha solamente en `127.0.0.1`. El acceso remoto exige un token de al menos 32 caracteres, `APPBUILDER_PUBLIC_ORIGIN` HTTPS y un proxy TLS. La app nativa pide URL HTTPS y token; guarda la URL y, si marcas **Recordar en este dispositivo**, también el token en el almacenamiento de la app (si no, solo durante la sesión). Consulta [despliegue y móvil](docs/DEPLOYMENT.md).
 
 **Es una versión para un solo usuario y proyectos de confianza.** Los comandos se ejecutan con los permisos del usuario del servidor. Las comprobaciones de rutas y el filtrado de variables no convierten la terminal en un contenedor aislado. Antes de ofrecerlo a terceros hay que incorporar autenticación por usuario, aislamiento de ejecución, límites de gasto, cuotas y operación de la infraestructura.
 

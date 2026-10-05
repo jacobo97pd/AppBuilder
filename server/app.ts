@@ -11,6 +11,9 @@ import { createIntegrationsRouter, redactSecrets } from "./integrations.js";
 import { configureJobRedaction } from "./jobs.js";
 import { createPreviewRouter } from "./preview.js";
 import { createRepositoriesRouter } from "./repositories.js";
+import { createFlutterRouter, serveFlutterPreview } from "./flutter.js";
+import { createFirebaseRouter } from "./firebase.js";
+import { createAppleRouter } from "./apple.js";
 import { APP_VERSION } from "../version.js";
 
 const nativeOrigins = new Set([
@@ -83,6 +86,10 @@ export function createApp(
         error: "Configura APPBUILDER_PUBLIC_ORIGIN para este dominio.",
       });
     }
+    // Built previews are static files behind an unguessable path. Their pages
+    // run sandboxed with an opaque origin ("null"), so they are served to it;
+    // the API below still rejects foreign origins.
+    if (req.method === "GET" && req.path.startsWith("/preview/")) return next();
     const origin = req.headers.origin;
     const sameOrigin =
       !origin ||
@@ -206,9 +213,20 @@ export function createApp(
   app.use("/api", createIntegrationsRouter());
   app.use("/api", createPreviewRouter());
   app.use("/api", createRepositoriesRouter());
+  app.use("/api", createFlutterRouter());
+  app.use("/api", createFirebaseRouter());
+  app.use("/api", createAppleRouter());
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Esta operación no existe." });
   });
+  // Pages that may embed a preview: this server, a public origin and the
+  // native apps.
+  const previewAncestors = [
+    "'self'",
+    ...(publicOrigin ? [publicOrigin] : []),
+    ...nativeOrigins,
+  ];
+  app.get("/preview/:token{/*file}", serveFlutterPreview(previewAncestors));
   const dist = path.resolve("dist");
   if (existsSync(path.join(dist, "index.html"))) {
     app.use(express.static(dist, { index: false }));

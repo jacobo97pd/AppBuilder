@@ -426,10 +426,10 @@ test("missing credentials disable execution and builds, and offer real setup", a
   await page
     .getByRole("button", { name: "Configurar agente", exact: true })
     .click();
-  await expect(page.locator(".connection-card")).toHaveCount(6);
+  await expect(page.locator(".connection-card")).toHaveCount(7);
   await expect(
     page.locator(".connection-card").filter({ hasText: "Sin conectar" }),
-  ).toHaveCount(6);
+  ).toHaveCount(7);
   await noPageOverflow(page);
   await navigate(page, "Builds");
   await expect(
