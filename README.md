@@ -1,6 +1,6 @@
 # AppBuilder Studio
 
-**Versión 0.1.4**
+**Versión 0.1.5**
 
 Entorno personal de desarrollo diseñado para móvil, tablet y escritorio. Interfaz en español, proyectos reales en disco, editor CodeMirror, agentes Codex/Claude, terminal, vista previa web y de Flutter, explorador de Firestore, asistente de publicación iOS y conexión a Codemagic.
 
